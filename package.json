@@ -3,12 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@supabase/supabase-js": "^2.117.2",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^13.5.0",
+    "bootstrap": "^5.3.8",
+    "bootstrap-icons": "^1.13.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "react-router-dom": "^7.18.4",
     "react-scripts": "5.0.1",
     "web-vitals": "^2.1.4"
   },
@@ -24,6 +28,12 @@
       "react-app/jest"
     ]
   },
+  "jest": {
+    "moduleNameMapper": {
+      "^react-router/dom$": "<rootDir>/node_modules/react-router/dist/development/dom-export.js",
+      "^react-router/internal$": "<rootDir>/node_modules/react-router/dist/development/index.js"
+    }
+  },
   "browserslist": {
     "production": [
       ">0.2%",
@@ -35,5 +45,10 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.6.1",
+    "postcss": "^8.5.28",
+    "tailwindcss": "^3.4.17"
   }
 }

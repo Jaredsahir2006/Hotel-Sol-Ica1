@@ -1,13 +1,79 @@
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: "Poppins", sans-serif;
+  background: #f8fafc;
+}
+
+/* =========================================
+   COMPONENTES DEL DASHBOARD
+========================================= */
+
+.sidebar-item {
+    @apply flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm text-slate-300 transition;
+}
+
+.sidebar-item:hover {
+    @apply bg-white/5 text-white;
+}
+
+.dashboard-card {
+    @apply rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition duration-200;
+}
+
+.dashboard-card:hover {
+    @apply -translate-y-1 shadow-lg;
+}
+
+.dashboard-icon {
+    @apply flex h-11 w-11 items-center justify-center rounded-xl text-lg;
+}
+
+.module-card {
+    @apply rounded-2xl border border-gray-200 bg-white p-6 shadow-sm transition duration-200;
+}
+
+.module-card:hover {
+    @apply -translate-y-1 border-blue-200 shadow-lg;
+}
+
+.module-card .module-icon {
+    @apply flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 text-xl text-blue-700 transition;
+}
+
+.module-card:hover .module-icon {
+    @apply bg-blue-700 text-white;
+}
+
+.module-card:hover {
+    @apply -translate-y-1 border-blue-200 shadow-lg;
+}
+
+.module-card .module-arrow {
+    @apply text-gray-300 transition;
+}
+
+.module-card:hover .module-arrow {
+    @apply text-blue-700;
+}
+
+.module-icon {
+    @apply flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 text-xl text-blue-700 transition;
+}
+
+.module-card:hover .module-icon {
+    @apply bg-blue-700 text-white;
 }
