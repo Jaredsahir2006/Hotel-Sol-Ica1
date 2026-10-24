@@ -14,46 +14,81 @@ import Reportes from "./Reportes";
 const MENU_CATEGORIAS = [
     {
         clave: "principal",
-        nombre: "Menú principal",
-        icono: "bi-briefcase",
+        nombre: "Recepción y reservas",
+        icono: "bi-calendar-check",
         opciones: [
             { clave: "checkinout", nombre: "Check-in / Check-out", icono: "bi-door-open" },
             { clave: "reservas", nombre: "Reservas", icono: "bi-calendar-check" },
-            { clave: "pagos", nombre: "Pagos y caja", icono: "bi-cash-coin" },
-            { clave: "facturacion", nombre: "Facturación", icono: "bi-receipt" },
-            { clave: "reportes", nombre: "Reportes", icono: "bi-bar-chart" },
             { clave: "huespedes", nombre: "Huéspedes", icono: "bi-people" },
+        ],
+    },
+    {
+        clave: "habitaciones",
+        nombre: "Habitaciones y servicios",
+        icono: "bi-building",
+        opciones: [
             { clave: "habitaciones", nombre: "Habitaciones", icono: "bi-door-open" },
-            { clave: "empleados", nombre: "Empleados", icono: "bi-person-badge" },
             { clave: "servicios", nombre: "Servicios", icono: "bi-cup-hot" },
             { clave: "limpieza", nombre: "Limpieza", icono: "bi-stars" },
             { clave: "cochera", nombre: "Cochera", icono: "bi-car-front" },
         ],
     },
     {
-        clave: "administracion",
-        nombre: "Administración",
-        icono: "bi-gear",
+        clave: "finanzas",
+        nombre: "Finanzas y caja",
+        icono: "bi-cash-coin",
         opciones: [
-            { clave: "departamento", nombre: "Departamentos", icono: "bi-geo-alt" },
-            { clave: "provincia", nombre: "Provincias", icono: "bi-map" },
-            { clave: "empresa", nombre: "Empresas", icono: "bi-building" },
-            { clave: "tipo_usuario", nombre: "Tipos de usuario", icono: "bi-person-vcard" },
-            { clave: "caja", nombre: "Cajas", icono: "bi-cash-stack" },
+            { clave: "pagos", nombre: "Pagos y caja", icono: "bi-cash-coin" },
             { clave: "apertura_caja", nombre: "Aperturas de caja", icono: "bi-box-arrow-in-right" },
+            { clave: "movimiento_caja", nombre: "Movimientos de caja", icono: "bi-arrow-left-right" },
+            { clave: "caja", nombre: "Cajas", icono: "bi-cash-stack" },
             { clave: "concepto_caja", nombre: "Conceptos de caja", icono: "bi-tags" },
             { clave: "tipo_movimiento_caja", nombre: "Tipos de movimiento", icono: "bi-arrow-left-right" },
-            { clave: "movimiento_caja", nombre: "Movimientos de caja", icono: "bi-cash-coin" },
+        ],
+    },
+    {
+        clave: "facturacion",
+        nombre: "Ventas y comprobantes",
+        icono: "bi-receipt",
+        opciones: [
+            { clave: "facturacion", nombre: "Facturación", icono: "bi-receipt" },
             { clave: "venta", nombre: "Ventas", icono: "bi-bag-check" },
             { clave: "detalle_venta", nombre: "Detalle de ventas", icono: "bi-list-check" },
             { clave: "factura", nombre: "Facturas", icono: "bi-file-earmark-text" },
             { clave: "boleta", nombre: "Boletas", icono: "bi-receipt" },
+        ],
+    },
+    {
+        clave: "reportes",
+        nombre: "Reportes",
+        icono: "bi-bar-chart",
+        opciones: [
+            { clave: "reportes", nombre: "Reportes", icono: "bi-bar-chart" },
+            { clave: "auditoria", nombre: "Auditoría", icono: "bi-clock-history" },
+        ],
+    },
+    {
+        clave: "organizacion",
+        nombre: "Personal y organización",
+        icono: "bi-people",
+        opciones: [
+            { clave: "empleados", nombre: "Empleados", icono: "bi-person-badge" },
+            { clave: "empresa", nombre: "Empresas", icono: "bi-building" },
+        ],
+    },
+    {
+        clave: "administracion",
+        nombre: "Administración del sistema",
+        icono: "bi-gear",
+        opciones: [
+            { clave: "departamento", nombre: "Departamentos", icono: "bi-geo-alt" },
+            { clave: "provincia", nombre: "Provincias", icono: "bi-map" },
+            { clave: "tipo_usuario", nombre: "Tipos de usuario", icono: "bi-person-vcard" },
             { clave: "modulo", nombre: "Módulos", icono: "bi-grid" },
             { clave: "rol", nombre: "Roles", icono: "bi-shield-lock" },
             { clave: "rol_permiso", nombre: "Permisos por rol", icono: "bi-key" },
             { clave: "usuario_rol", nombre: "Roles de usuarios", icono: "bi-person-check" },
             { clave: "usuarios", nombre: "Usuarios", icono: "bi-person-gear" },
-            { clave: "auditoria", nombre: "Auditoría", icono: "bi-clock-history" },
         ],
     },
 ];
@@ -326,10 +361,6 @@ const Dashboard = () => {
                             );
                         })}
 
-                        <button type="button" className="sidebar-item mt-2">
-                            <i className="bi bi-gear" aria-hidden="true"></i>
-                            <span>Configuración</span>
-                        </button>
                     </nav>
 
                 </div>

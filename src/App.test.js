@@ -72,17 +72,40 @@ test('el menú lateral permite contraer y expandir las categorías', async () =>
   window.history.pushState({}, '', '/dashboard');
   render(<App />);
 
-  const categoriaPrincipal = screen.getByRole('button', { name: /menú principal/i });
+  const categoriaPrincipal = screen.getByRole('button', { name: /recepción y reservas/i });
   expect(categoriaPrincipal).toHaveAttribute('aria-expanded', 'true');
   expect(screen.getByRole('button', { name: 'Reservas' })).toBeInTheDocument();
 
   await userEvent.click(categoriaPrincipal);
-  expect(screen.getByRole('button', { name: /menú principal/i })).toHaveAttribute(
+  expect(screen.getByRole('button', { name: /recepción y reservas/i })).toHaveAttribute(
     'aria-expanded',
     'false'
   );
   expect(screen.queryByRole('button', { name: 'Reservas' })).not.toBeInTheDocument();
 
-  await userEvent.click(screen.getByRole('button', { name: /menú principal/i }));
+  await userEvent.click(screen.getByRole('button', { name: /recepción y reservas/i }));
   expect(screen.getByRole('button', { name: 'Reservas' })).toBeInTheDocument();
+});
+
+test('el sidebar organiza los módulos y tablas en categorías del hotel', async () => {
+  sessionStorage.setItem(
+    'usuario',
+    JSON.stringify({ logeo: 'admin', id_usuario: 1, id_tipousuario: 1 })
+  );
+  window.history.pushState({}, '', '/dashboard');
+  render(<App />);
+
+  expect(screen.getByRole('button', { name: /habitaciones y servicios/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /finanzas y caja/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /ventas y comprobantes/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /reportes/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /personal y organización/i })).toBeInTheDocument();
+
+  await userEvent.click(
+    screen.getByRole('button', { name: /administración del sistema/i })
+  );
+
+  expect(screen.getByRole('button', { name: 'Departamentos' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Permisos por rol' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Usuarios' })).toBeInTheDocument();
 });
