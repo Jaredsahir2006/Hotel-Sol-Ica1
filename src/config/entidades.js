@@ -226,8 +226,7 @@ export const ENTIDADES = {
       { name: "moneda", label: "Moneda", type: "select", required: true,
         options: [{ value: "PEN", label: "Soles (PEN)" }, { value: "USD", label: "Dólares (USD)" }] },
       { name: "monto_base", label: "Monto base (S/)", type: "number", required: true, min: 0 },
-      { name: "aperturada", label: "Aperturada", type: "select", required: true,
-        options: [{ value: "1", label: "Sí" }, { value: "0", label: "No" }] },
+      { name: "aperturada", oculto: true, defecto: "0" },
       { name: "f_creacion", type: "date", oculto: true, defecto: () => new Date().toISOString() },
     ],
   },
@@ -357,6 +356,7 @@ export const ENTIDADES = {
     icono: "bi-box-arrow-in-right",
     tabla: "apertura_caja",
     pk: "id_aperturacaja",
+    soloLectura: true,
     buscarEn: ["numero_turno", "observacion"],
     filtros: ["id_caja", "situacion", "id_usuario"],
     campos: [
@@ -407,6 +407,7 @@ export const ENTIDADES = {
     icono: "bi-arrow-left-right",
     tabla: "movimiento_caja",
     pk: "id_movimientocaja",
+    soloLectura: true,
     buscarEn: ["numero_operacion", "documento", "descripcion", "terminal"],
     filtros: ["id_aperturacaja", "id_tipomovimiento", "id_concepto", "id_metodopago", "afecta_efectivo"],
     campos: [

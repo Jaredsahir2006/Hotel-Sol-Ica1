@@ -154,7 +154,8 @@ const Pagos = () => {
 
     const abrir = async (e) => {
         e.preventDefault();
-        if (!formApertura.id_caja || Number(formApertura.monto_inicial) < 0) {
+        const montoInicial = Number(formApertura.monto_inicial);
+        if (!formApertura.id_caja || formApertura.monto_inicial === "" || !Number.isFinite(montoInicial) || montoInicial < 0) {
             avisar("Selecciona una caja e ingresa el monto inicial.", false);
             return;
         }
@@ -164,7 +165,7 @@ const Pagos = () => {
             await abrirCaja({
                 id_caja: Number(formApertura.id_caja),
                 id_usuario: usuario?.id_usuario,
-                monto_inicial: Number(formApertura.monto_inicial),
+                monto_inicial: montoInicial,
             });
             setFormApertura({ id_caja: "", monto_inicial: "" });
             setMostrarApertura(false);
@@ -191,9 +192,12 @@ const Pagos = () => {
 
         setGuardando(true);
         try {
-            await cerrarCaja(apertura.id_aperturacaja, { monto_declarado: declarado });
+            const resultado = await cerrarCaja(apertura.id_aperturacaja, { monto_declarado: declarado });
             await cargar();
-            avisar("Caja cerrada y cuadrada correctamente.");
+            const diferencia = Number(resultado.diferencia) || 0;
+            avisar(diferencia === 0
+                ? "Caja cerrada sin diferencia."
+                : `Caja cerrada con diferencia de ${soles(diferencia)}.`);
         } catch (errorCierre) {
             avisar(errorCierre.message, false);
         } finally {
@@ -244,9 +248,14 @@ const Pagos = () => {
                             className={`${inputClase} mt-1.5 font-normal`}
                         >
                             <option value="">-- Seleccione --</option>
-                            {catalogos.cajas.map((c) => (
-                                <option key={c.id_caja} value={c.id_caja}>{c.n_caja}</option>
-                            ))}
+                            {catalogos.cajas.map((c) => {
+                                const estaAbierta = aperturas.some((a) => String(a.id_caja) === String(c.id_caja));
+                                return (
+                                    <option key={c.id_caja} value={c.id_caja} disabled={estaAbierta}>
+                                        {c.n_caja}{estaAbierta ? " (turno abierto)" : ""}
+                                    </option>
+                                );
+                            })}
                         </select>
                     </label>
                     <label className="block text-xs font-semibold text-slate-700">

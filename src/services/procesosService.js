@@ -1,4 +1,5 @@
 import { supabase } from "../config/supabase";
+import { calcularTotalesEfectivo } from "../utils/caja";
 
 // ============================================================
 // Servicios de los procesos operativos:
@@ -268,17 +269,31 @@ export const listarAperturasAbiertas = async () => {
 };
 
 export const abrirCaja = async ({ id_caja, id_usuario, monto_inicial }) => {
-    const todas = await leer(supabase.from("apertura_caja").select("numero_turno"));
+    const cajaId = Number(id_caja);
+    const usuarioId = Number(id_usuario || usuarioActualId());
+    const montoIngresado = Number(monto_inicial);
+    if (!Number.isInteger(cajaId) || cajaId <= 0) throw new Error("Selecciona una caja válida.");
+    if (!Number.isInteger(usuarioId) || usuarioId <= 0) throw new Error("No se pudo identificar al usuario que abre la caja.");
+    if (!Number.isFinite(montoIngresado) || montoIngresado < 0) throw new Error("El monto inicial debe ser un importe válido y no negativo.");
+    const monto = Math.round(montoIngresado * 100) / 100;
+
+    const [caja, aperturasAbiertas, todas] = await Promise.all([
+        leer(supabase.from("caja").select("*").eq("id_caja", cajaId).eq("estado", "1").maybeSingle()),
+        leer(supabase.from("apertura_caja").select("id_aperturacaja").eq("id_caja", cajaId).eq("situacion", "A").eq("estado", "1")),
+        leerTodos(() => supabase.from("apertura_caja").select("numero_turno")),
+    ]);
+    if (!caja) throw new Error("La caja seleccionada no existe o está inactiva.");
+    if (aperturasAbiertas.length) throw new Error("Esta caja ya tiene un turno abierto.");
+
     const maximo = todas.reduce((max, a) => {
         const valor = Number(String(a.numero_turno || "").replace(/\D/g, ""));
         return Number.isFinite(valor) && valor > max ? valor : max;
     }, 0);
     const numero = `T${String(maximo + 1).padStart(4, "0")}`;
-    const monto = Number(monto_inicial) || 0;
 
     const apertura = await insertarFila("apertura_caja", {
-        id_caja: Number(id_caja),
-        id_usuario: Number(id_usuario || usuarioActualId()),
+        id_caja: cajaId,
+        id_usuario: usuarioId,
         numero_turno: numero,
         f_apertura: ahora(),
         f_cierre: null,
@@ -292,52 +307,60 @@ export const abrirCaja = async ({ id_caja, id_usuario, monto_inicial }) => {
         observacion: "Apertura de caja desde el módulo de pagos",
     });
 
-    await actualizarFila("caja", "id_caja", id_caja, { aperturada: "1" });
+    await actualizarFila("caja", "id_caja", cajaId, { aperturada: "1" });
     return apertura;
 };
 
 export const cerrarCaja = async (id_aperturacaja, { monto_declarado, observacion } = {}) => {
+    const aperturaId = Number(id_aperturacaja);
+    const declaradoIngresado = Number(monto_declarado);
+    const usuarioCierreId = usuarioActualId();
+    if (!Number.isInteger(aperturaId) || aperturaId <= 0) throw new Error("Selecciona un turno de caja válido.");
+    if (monto_declarado == null || monto_declarado === "" || !Number.isFinite(declaradoIngresado) || declaradoIngresado < 0) {
+        throw new Error("El monto declarado debe ser un importe válido y no negativo.");
+    }
+    const declarado = Math.round(declaradoIngresado * 100) / 100;
+    if (!Number.isInteger(Number(usuarioCierreId)) || Number(usuarioCierreId) <= 0) {
+        throw new Error("No se pudo identificar al usuario que cierra la caja.");
+    }
+
     const { data: apertura, error } = await supabase
         .from("apertura_caja")
         .select("*")
-        .eq("id_aperturacaja", id_aperturacaja)
-        .single();
+        .eq("id_aperturacaja", aperturaId)
+        .maybeSingle();
     lanzar(error);
     if (!apertura) throw new Error("La apertura de caja no existe.");
     if (String(apertura.situacion).toUpperCase() === "C") throw new Error("Esta caja ya está cerrada.");
 
-    const movimientos = await leer(
-        supabase
-            .from("movimiento_caja")
-            .select("*")
-            .eq("estado", "1")
-            .eq("id_aperturacaja", id_aperturacaja)
+    const [movimientos, tipos] = await Promise.all([
+        leer(supabase.from("movimiento_caja").select("*").eq("estado", "1").eq("id_aperturacaja", aperturaId)),
+        leer(supabase.from("tipo_movimiento_caja").select("id_tipomovimiento, signo")),
+    ]);
+    const { ingresos, egresos, sistema } = calcularTotalesEfectivo(
+        apertura.monto_inicial,
+        movimientos,
+        tipos
     );
-    const tipos = await leer(supabase.from("tipo_movimiento_caja").select("*").eq("estado", "1"));
 
-    let ingresos = 0;
-    let egresos = 0;
-    for (const m of movimientos) {
-        const tipo = tipos.find((t) => t.id_tipomovimiento === m.id_tipomovimiento);
-        const signo = tipo?.signo || "+";
-        if (signo === "-") egresos += Number(m.monto) || 0;
-        else ingresos += Number(m.monto) || 0;
-    }
-
-    const sistema = Number(apertura.monto_inicial) + ingresos - egresos;
-    const declarado = Number(monto_declarado) || 0;
-
-    const cerrada = await actualizarFila("apertura_caja", "id_aperturacaja", id_aperturacaja, {
-        id_usuariocierre: usuarioActualId(),
-        f_cierre: ahora(),
-        total_ingresos: ingresos,
-        total_egresos: egresos,
-        monto_sistema: sistema,
-        monto_declarado: declarado,
-        diferencia: declarado - sistema,
-        situacion: "C",
-        observacion: observacion || apertura.observacion || "Cierre de caja",
-    });
+    const { data: cerrada, error: errorCierre } = await supabase
+        .from("apertura_caja")
+        .update(auditar({
+            id_usuariocierre: usuarioCierreId,
+            f_cierre: ahora(),
+            total_ingresos: ingresos,
+            total_egresos: egresos,
+            monto_sistema: sistema,
+            monto_declarado: declarado,
+            diferencia: Math.round((declarado - sistema) * 100) / 100,
+            situacion: "C",
+            observacion: observacion || apertura.observacion || "Cierre de caja",
+        }, false))
+        .eq("id_aperturacaja", aperturaId)
+        .eq("situacion", "A")
+        .select()
+        .single();
+    lanzar(errorCierre);
 
     await actualizarFila("caja", "id_caja", apertura.id_caja, { aperturada: "0" });
     return cerrada;
@@ -354,8 +377,10 @@ export const registrarPago = async ({
     documento,
     descripcion,
 }) => {
-    const valor = Number(monto) || 0;
-    if (valor <= 0) throw new Error("El monto del pago debe ser mayor a cero.");
+    const valorIngresado = Number(monto);
+    if (!Number.isFinite(valorIngresado) || valorIngresado <= 0) throw new Error("El monto del pago debe ser un importe válido mayor a cero.");
+    const valor = Math.round(valorIngresado * 100) / 100;
+    if (valor <= 0) throw new Error("El monto del pago debe ser mayor a un céntimo.");
 
     const [concepto, tipo, apertura] = await Promise.all([
         leer(supabase.from("concepto_caja").select("*").eq("id_concepto", id_concepto).single()),
@@ -366,35 +391,51 @@ export const registrarPago = async ({
     if (!apertura || String(apertura.situacion).toUpperCase() !== "A")
         throw new Error("La caja seleccionada no está abierta.");
     if (!tipo) throw new Error("El tipo de movimiento no existe.");
+    if (String(concepto.id_tipomovimiento) !== String(id_tipomovimiento)) {
+        throw new Error("El tipo de movimiento no corresponde al concepto seleccionado.");
+    }
+    if (!["+", "-"].includes(tipo.signo)) {
+        throw new Error("El tipo de movimiento no tiene un signo válido.");
+    }
+    const afectaEfectivo = String(concepto.afecta_efectivo || "").toUpperCase();
+    if (!["S", "N"].includes(afectaEfectivo)) {
+        throw new Error("El concepto no indica si el movimiento afecta al efectivo.");
+    }
+    const usuarioId = usuarioActualId();
+    if (!Number.isInteger(Number(usuarioId)) || Number(usuarioId) <= 0) {
+        throw new Error("No se pudo identificar al usuario que registra el movimiento.");
+    }
 
     const movimiento = await insertarFila("movimiento_caja", {
         id_aperturacaja: Number(id_aperturacaja),
         id_tipomovimiento: Number(id_tipomovimiento),
         id_concepto: Number(id_concepto),
         id_metodopago: Number(id_metodopago),
-        id_usuario: usuarioActualId() || apertura.id_usuario,
+        id_usuario: usuarioId,
         id_recepcion: id_recepcion ? Number(id_recepcion) : null,
         id_venta: null,
         numero_operacion: numero_operacion || `OP${Date.now()}`,
         documento: documento || null,
         descripcion: descripcion || concepto?.n_concepto || "Pago registrado",
         monto: valor,
-        afecta_efectivo: concepto?.afecta_efectivo || "S",
+        afecta_efectivo: afectaEfectivo,
         f_movimiento: ahora(),
         ip: "127.0.0.1",
         terminal: "WEB",
     });
 
-    const ingresos = Number(apertura.total_ingresos) || 0;
-    const egresos = Number(apertura.total_egresos) || 0;
-    const nuevosIngresos = tipo.signo === "-" ? ingresos : ingresos + valor;
-    const nuevosEgresos = tipo.signo === "-" ? egresos + valor : egresos;
+    if (afectaEfectivo === "S") {
+        const ingresos = Number(apertura.total_ingresos) || 0;
+        const egresos = Number(apertura.total_egresos) || 0;
+        const nuevosIngresos = Math.round((tipo.signo === "-" ? ingresos : ingresos + valor) * 100) / 100;
+        const nuevosEgresos = Math.round((tipo.signo === "-" ? egresos + valor : egresos) * 100) / 100;
 
-    await actualizarFila("apertura_caja", "id_aperturacaja", id_aperturacaja, {
-        total_ingresos: nuevosIngresos,
-        total_egresos: nuevosEgresos,
-        monto_sistema: Number(apertura.monto_inicial) + nuevosIngresos - nuevosEgresos,
-    });
+        await actualizarFila("apertura_caja", "id_aperturacaja", id_aperturacaja, {
+            total_ingresos: nuevosIngresos,
+            total_egresos: nuevosEgresos,
+            monto_sistema: Math.round((Number(apertura.monto_inicial) + nuevosIngresos - nuevosEgresos) * 100) / 100,
+        });
+    }
 
     if (id_recepcion) {
         const { data: recepcion } = await supabase
