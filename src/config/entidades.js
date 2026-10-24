@@ -149,6 +149,22 @@ export const ENTIDADES = {
     ],
   },
 
+  // PROVINCIA -> tabla provincia (ubigeo)
+  provincia: {
+    titulo: "Provincias",
+    descripcion: "Provincias del país, vinculadas a un departamento (ubigeo).",
+    icono: "bi-map",
+    tabla: "provincia",
+    pk: "id_provincia",
+    buscarEn: ["n_provincia"],
+    filtros: ["id_departamento"],
+    campos: [
+      { name: "id_departamento", label: "Departamento", type: "select", required: true,
+        ref: { tabla: "departamento", pk: "id_departamento", label: (r) => r.n_departamento } },
+      { name: "n_provincia", label: "Nombre", type: "text", required: true },
+    ],
+  },
+
   // DEPARTAMENTO -> tabla departamento (ubigeo)
   departamento: {
     titulo: "Departamentos",
@@ -263,6 +279,224 @@ export const ENTIDADES = {
       { name: "descripcion", label: "Descripción", type: "text" },
       { name: "nivel", label: "Nivel", type: "number", required: true, min: 1 },
       { name: "f_creacion", type: "date", oculto: true, defecto: () => new Date().toISOString() },
+    ],
+  },
+
+  // FACTURA -> tabla factura (comprobante electrónico)
+  factura: {
+    titulo: "Facturas",
+    descripcion: "Comprobantes de factura emitidos por recepción.",
+    icono: "bi-file-earmark-text",
+    tabla: "factura",
+    pk: "id_factura",
+    buscarEn: ["numero", "serie"],
+    campos: [
+      { name: "id_recepcion", label: "Recepción", type: "select", required: true,
+        ref: { tabla: "recepcion", pk: "id_recepcion", label: (r) => `Recepción #${r.id_recepcion}` } },
+      { name: "f_emision", label: "Fecha de emisión", type: "date", required: true },
+      { name: "numero", label: "Número", type: "text", required: true },
+      { name: "serie", label: "Serie", type: "text", required: true },
+    ],
+  },
+
+  // BOLETA -> tabla boleta (comprobante electrónico)
+  boleta: {
+    titulo: "Boletas",
+    descripcion: "Comprobantes de boleta emitidos por recepción.",
+    icono: "bi-receipt",
+    tabla: "boleta",
+    pk: "id_boleta",
+    buscarEn: ["numero", "serie"],
+    campos: [
+      { name: "id_recepcion", label: "Recepción", type: "select", required: true,
+        ref: { tabla: "recepcion", pk: "id_recepcion", label: (r) => `Recepción #${r.id_recepcion}` } },
+      { name: "f_emision", label: "Fecha de emisión", type: "date", required: true },
+      { name: "numero", label: "Número", type: "text", required: true },
+      { name: "serie", label: "Serie", type: "text", required: true },
+    ],
+  },
+
+  // VENTA -> tabla venta (consumos de una recepción)
+  venta: {
+    titulo: "Ventas",
+    descripcion: "Ventas de productos y servicios asociadas a una recepción.",
+    icono: "bi-cash-coin",
+    tabla: "venta",
+    pk: "id_venta",
+    buscarEn: [],
+    campos: [
+      { name: "id_recepcion", label: "Recepción", type: "select", required: true,
+        ref: { tabla: "recepcion", pk: "id_recepcion", label: (r) => `Recepción #${r.id_recepcion}` } },
+      { name: "total", label: "Total (S/)", type: "number", required: true, min: 0 },
+    ],
+  },
+
+  // DETALLE_VENTA -> tabla detalle_venta
+  detalle_venta: {
+    titulo: "Detalle de ventas",
+    descripcion: "Productos y cantidades que componen cada venta.",
+    icono: "bi-list-check",
+    tabla: "detalle_venta",
+    pk: "id_detalle",
+    buscarEn: [],
+    filtros: ["id_venta", "id_producto"],
+    campos: [
+      { name: "id_venta", label: "Venta", type: "select", required: true,
+        ref: { tabla: "venta", pk: "id_venta", label: (r) => `Venta #${r.id_venta}` } },
+      { name: "id_producto", label: "Producto", type: "select", required: true,
+        ref: { tabla: "producto", pk: "id_producto", label: (r) => r.n_producto } },
+      { name: "cantidad", label: "Cantidad", type: "number", required: true, min: 1 },
+      { name: "sub_total", label: "Subtotal (S/)", type: "number", required: true, min: 0 },
+    ],
+  },
+
+  // APERTURA_CAJA -> tabla apertura_caja (turnos de caja)
+  apertura_caja: {
+    titulo: "Aperturas de caja",
+    descripcion: "Apertura, cierre y cuadre de los turnos de caja.",
+    icono: "bi-box-arrow-in-right",
+    tabla: "apertura_caja",
+    pk: "id_aperturacaja",
+    buscarEn: ["numero_turno", "observacion"],
+    filtros: ["id_caja", "situacion", "id_usuario"],
+    campos: [
+      { name: "id_caja", label: "Caja", type: "select", required: true,
+        ref: { tabla: "caja", pk: "id_caja", label: (r) => r.n_caja } },
+      { name: "id_usuario", label: "Usuario apertura", type: "select", required: true,
+        ref: { tabla: "usuario", pk: "id_usuario", label: (r) => r.logeo } },
+      { name: "id_usuariocierre", label: "Usuario cierre", type: "select",
+        ref: { tabla: "usuario", pk: "id_usuario", label: (r) => r.logeo } },
+      { name: "numero_turno", label: "N° de turno", type: "text", required: true },
+      { name: "f_apertura", label: "Fecha de apertura", type: "date", required: true },
+      { name: "f_cierre", label: "Fecha de cierre", type: "date" },
+      { name: "monto_inicial", label: "Monto inicial (S/)", type: "number", required: true, min: 0 },
+      { name: "total_ingresos", label: "Total ingresos (S/)", type: "number", min: 0 },
+      { name: "total_egresos", label: "Total egresos (S/)", type: "number", min: 0 },
+      { name: "monto_sistema", label: "Monto sistema (S/)", type: "number", min: 0 },
+      { name: "monto_declarado", label: "Monto declarado (S/)", type: "number", min: 0 },
+      { name: "diferencia", label: "Diferencia (S/)", type: "number" },
+      { name: "situacion", label: "Situación", type: "select", required: true,
+        options: [{ value: "A", label: "Abierta" }, { value: "C", label: "Cerrada" }] },
+      { name: "observacion", label: "Observación", type: "text" },
+    ],
+  },
+
+  // CONCEPTO_CAJA -> tabla concepto_caja
+  concepto_caja: {
+    titulo: "Conceptos de caja",
+    descripcion: "Conceptos que clasifican los ingresos y egresos de caja.",
+    icono: "bi-tags",
+    tabla: "concepto_caja",
+    pk: "id_concepto",
+    buscarEn: ["n_concepto", "descripcion"],
+    filtros: ["id_tipomovimiento", "afecta_efectivo"],
+    campos: [
+      { name: "id_tipomovimiento", label: "Tipo de movimiento", type: "select", required: true,
+        ref: { tabla: "tipo_movimiento_caja", pk: "id_tipomovimiento", label: (r) => r.n_tipomovimiento } },
+      { name: "n_concepto", label: "Nombre", type: "text", required: true },
+      { name: "descripcion", label: "Descripción", type: "text" },
+      { name: "afecta_efectivo", label: "Afecta efectivo", type: "select", required: true,
+        options: [{ value: "S", label: "Sí" }, { value: "N", label: "No" }] },
+    ],
+  },
+
+  // MOVIMIENTO_CAJA -> tabla movimiento_caja (pagos e ingresos/egresos)
+  movimiento_caja: {
+    titulo: "Movimientos de caja",
+    descripcion: "Ingresos y egresos registrados en los turnos de caja.",
+    icono: "bi-arrow-left-right",
+    tabla: "movimiento_caja",
+    pk: "id_movimientocaja",
+    buscarEn: ["numero_operacion", "documento", "descripcion", "terminal"],
+    filtros: ["id_aperturacaja", "id_tipomovimiento", "id_concepto", "id_metodopago", "afecta_efectivo"],
+    campos: [
+      { name: "id_aperturacaja", label: "Apertura de caja", type: "select", required: true,
+        ref: { tabla: "apertura_caja", pk: "id_aperturacaja", label: (r) => `Turno ${r.numero_turno}` } },
+      { name: "id_tipomovimiento", label: "Tipo de movimiento", type: "select", required: true,
+        ref: { tabla: "tipo_movimiento_caja", pk: "id_tipomovimiento", label: (r) => r.n_tipomovimiento } },
+      { name: "id_concepto", label: "Concepto", type: "select", required: true,
+        ref: { tabla: "concepto_caja", pk: "id_concepto", label: (r) => r.n_concepto } },
+      { name: "id_metodopago", label: "Método de pago", type: "select", required: true,
+        ref: { tabla: "metodo_pago", pk: "id_metodopago", label: (r) => r.n_metodopago } },
+      { name: "id_usuario", label: "Usuario", type: "select", required: true,
+        ref: { tabla: "usuario", pk: "id_usuario", label: (r) => r.logeo } },
+      { name: "id_recepcion", label: "Recepción", type: "select",
+        ref: { tabla: "recepcion", pk: "id_recepcion", label: (r) => `Recepción #${r.id_recepcion}` } },
+      { name: "id_venta", label: "Venta", type: "select",
+        ref: { tabla: "venta", pk: "id_venta", label: (r) => `Venta #${r.id_venta}` } },
+      { name: "numero_operacion", label: "N° de operación", type: "text" },
+      { name: "documento", label: "Documento", type: "text" },
+      { name: "descripcion", label: "Descripción", type: "text" },
+      { name: "monto", label: "Monto (S/)", type: "number", required: true, min: 0 },
+      { name: "afecta_efectivo", label: "Afecta efectivo", type: "select", required: true,
+        options: [{ value: "S", label: "Sí" }, { value: "N", label: "No" }] },
+      { name: "f_movimiento", label: "Fecha del movimiento", type: "date", required: true },
+      { name: "ip", label: "IP", type: "text" },
+      { name: "terminal", label: "Terminal", type: "text" },
+    ],
+  },
+
+  // ROL_PERMISO -> tabla rol_permiso
+  rol_permiso: {
+    titulo: "Permisos por rol",
+    descripcion: "Permisos concedidos a cada rol del sistema.",
+    icono: "bi-key",
+    tabla: "rol_permiso",
+    pk: "id_rolpermiso",
+    buscarEn: [],
+    filtros: ["id_rol", "id_permiso", "concedido"],
+    campos: [
+      { name: "id_rol", label: "Rol", type: "select", required: true,
+        ref: { tabla: "rol", pk: "id_rol", label: (r) => r.n_rol } },
+      { name: "id_permiso", label: "Permiso", type: "select", required: true,
+        ref: { tabla: "permiso", pk: "id_permiso", label: (r) => r.n_permiso } },
+      { name: "concedido", label: "Concedido", type: "select", required: true,
+        options: [{ value: "1", label: "Sí" }, { value: "0", label: "No" }] },
+    ],
+  },
+
+  // USUARIO_ROL -> tabla usuario_rol
+  usuario_rol: {
+    titulo: "Roles de usuarios",
+    descripcion: "Asignación vigente de roles a los usuarios del sistema.",
+    icono: "bi-person-check",
+    tabla: "usuario_rol",
+    pk: "id_usuariorol",
+    buscarEn: [],
+    filtros: ["id_usuario", "id_rol", "vigente"],
+    campos: [
+      { name: "id_usuario", label: "Usuario", type: "select", required: true,
+        ref: { tabla: "usuario", pk: "id_usuario", label: (r) => r.logeo } },
+      { name: "id_rol", label: "Rol", type: "select", required: true,
+        ref: { tabla: "rol", pk: "id_rol", label: (r) => r.n_rol } },
+      { name: "f_asignacion", label: "Fecha de asignación", type: "date", required: true },
+      { name: "vigente", label: "Vigente", type: "select", required: true,
+        options: [{ value: "1", label: "Sí" }, { value: "0", label: "No" }] },
+    ],
+  },
+
+  // AUDITORIA -> tabla auditoria (solo lectura: es un registro histórico)
+  auditoria: {
+    titulo: "Auditoría",
+    descripcion: "Historial de operaciones realizadas sobre las tablas del sistema.",
+    icono: "bi-clock-history",
+    tabla: "auditoria",
+    pk: "id_auditoria",
+    soloLectura: true,
+    buscarEn: ["n_tabla", "accion", "ip", "terminal"],
+    filtros: ["id_usuario", "accion"],
+    campos: [
+      { name: "id_usuario", label: "Usuario", type: "select",
+        ref: { tabla: "usuario", pk: "id_usuario", label: (r) => r.logeo } },
+      { name: "n_tabla", label: "Tabla", type: "text" },
+      { name: "accion", label: "Acción", type: "select",
+        options: ["INSERT", "UPDATE", "DELETE"] },
+      { name: "id_registro", label: "ID de registro", type: "number" },
+      { name: "valor_anterior", label: "Valor anterior", type: "text" },
+      { name: "valor_nuevo", label: "Valor nuevo", type: "text" },
+      { name: "f_evento", label: "Fecha del evento", type: "date" },
+      { name: "ip", label: "IP", type: "text" },
+      { name: "terminal", label: "Terminal", type: "text" },
     ],
   },
 };

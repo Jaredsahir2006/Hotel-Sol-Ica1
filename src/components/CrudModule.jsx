@@ -17,6 +17,8 @@ const CrudModule = ({ entidadKey }) => {
     const entidad = ENTIDADES[entidadKey];
     const { tabla, pk, campos } = entidad;
     const visibles = campos.filter((c) => !c.oculto);
+    const soloLectura = Boolean(entidad.soloLectura);
+    const columnas = visibles.length + (soloLectura ? 0 : 1);
 
     // Opciones: acepta "TEXTO" o { value, label }
     const normalizar = (o) =>
@@ -325,17 +327,25 @@ const CrudModule = ({ entidadKey }) => {
                     </div>
                 </div>
 
-                <button
-                    onClick={abrirNuevo}
-                    className="rounded-xl bg-blue-800 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-900"
-                >
-                    <i className="bi bi-plus-lg mr-2"></i>
-                    Nuevo
-                </button>
+                {!soloLectura && (
+                    <button
+                        onClick={abrirNuevo}
+                        className="rounded-xl bg-blue-800 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-900"
+                    >
+                        <i className="bi bi-plus-lg mr-2"></i>
+                        Nuevo
+                    </button>
+                )}
+                {soloLectura && (
+                    <span className="rounded-full bg-slate-200 px-4 py-2 text-xs font-semibold text-slate-600">
+                        <i className="bi bi-lock mr-2"></i>
+                        Solo lectura
+                    </span>
+                )}
             </div>
 
             {/* Formulario */}
-            {formAbierto && (
+            {!soloLectura && formAbierto && (
                 <section className="mb-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
                     <h3 className="mb-4 font-semibold text-slate-900">
                         {editandoId ? `Editar ${entidad.titulo.toLowerCase()}` : `Nuevo registro de ${entidad.titulo.toLowerCase()}`}
@@ -489,19 +499,21 @@ const CrudModule = ({ entidadKey }) => {
                                 {visibles.map((c) => (
                                     <th key={c.name} className="px-5 py-3 font-semibold">{c.label}</th>
                                 ))}
-                                <th className="px-5 py-3 font-semibold">Acciones</th>
+                                {!soloLectura && (
+                                    <th className="px-5 py-3 font-semibold">Acciones</th>
+                                )}
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                             {cargando ? (
                                 <tr>
-                                    <td colSpan={visibles.length + 1} className="px-5 py-10 text-center text-gray-400">
+                                    <td colSpan={columnas} className="px-5 py-10 text-center text-gray-400">
                                         Cargando...
                                     </td>
                                 </tr>
                             ) : filas.length === 0 ? (
                                 <tr>
-                                    <td colSpan={visibles.length + 1} className="px-5 py-10 text-center text-gray-400">
+                                    <td colSpan={columnas} className="px-5 py-10 text-center text-gray-400">
                                         {busquedaDebounced || hayFiltrosActivos ? "Sin resultados" : "Sin registros"}
                                     </td>
                                 </tr>
@@ -513,20 +525,22 @@ const CrudModule = ({ entidadKey }) => {
                                                 {textoCelda(c, fila[c.name])}
                                             </td>
                                         ))}
-                                        <td className="whitespace-nowrap px-5 py-3">
-                                            <button
-                                                onClick={() => abrirEditar(fila)}
-                                                className="mr-2 rounded-lg bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-200"
-                                            >
-                                                <i className="bi bi-pencil mr-1"></i>Editar
-                                            </button>
-                                            <button
-                                                onClick={() => borrar(fila)}
-                                                className="rounded-lg bg-red-100 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-200"
-                                            >
-                                                <i className="bi bi-trash mr-1"></i>Eliminar
-                                            </button>
-                                        </td>
+                                        {!soloLectura && (
+                                            <td className="whitespace-nowrap px-5 py-3">
+                                                <button
+                                                    onClick={() => abrirEditar(fila)}
+                                                    className="mr-2 rounded-lg bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-200"
+                                                >
+                                                    <i className="bi bi-pencil mr-1"></i>Editar
+                                                </button>
+                                                <button
+                                                    onClick={() => borrar(fila)}
+                                                    className="rounded-lg bg-red-100 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-200"
+                                                >
+                                                    <i className="bi bi-trash mr-1"></i>Eliminar
+                                                </button>
+                                            </td>
+                                        )}
                                     </tr>
                                 ))
                             )}
