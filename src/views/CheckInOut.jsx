@@ -9,6 +9,8 @@ import {
     registrarCheckOut,
 } from "../services/procesosService";
 import { fecha, hoy, noches, soles, sumarDias } from "../utils/format";
+import Paginacion from "../components/Paginacion";
+import { usePaginacion } from "../hooks/usePaginacion";
 
 const inputClase =
     "w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100";
@@ -187,6 +189,9 @@ const CheckInOut = () => {
 
     const activas = filtradas.filter((r) => !r.f_salidac);
     const finalizadas = filtradas.filter((r) => r.f_salidac);
+    const ordenadas = [...activas, ...finalizadas];
+    const paginacion = usePaginacion(ordenadas.length);
+    const recepcionesPagina = ordenadas.slice(paginacion.desde, paginacion.hasta);
 
     const estadoBadge = (r) =>
         r.f_salidac ? (
@@ -342,7 +347,10 @@ const CheckInOut = () => {
                 <input
                     type="text"
                     value={busqueda}
-                    onChange={(e) => setBusqueda(e.target.value)}
+                    onChange={(e) => {
+                        setBusqueda(e.target.value);
+                        paginacion.setPagina(1);
+                    }}
                     placeholder="Buscar por cliente, documento o habitación..."
                     className={inputClase}
                 />
@@ -370,12 +378,12 @@ const CheckInOut = () => {
                                 <tr>
                                     <td colSpan={10} className="px-5 py-10 text-center text-gray-400">Cargando...</td>
                                 </tr>
-                            ) : filtradas.length === 0 ? (
+                            ) : ordenadas.length === 0 ? (
                                 <tr>
                                     <td colSpan={10} className="px-5 py-10 text-center text-gray-400">Sin recepciones</td>
                                 </tr>
                             ) : (
-                                [...activas, ...finalizadas].map((r) => (
+                                recepcionesPagina.map((r) => (
                                     <tr key={r.id_recepcion} className="hover:bg-slate-50">
                                         <td className="px-5 py-3 font-semibold text-slate-700">#{r.id_recepcion}</td>
                                         <td className="px-5 py-3 text-slate-700">
@@ -410,6 +418,8 @@ const CheckInOut = () => {
                     </table>
                 </div>
             </section>
+
+            <Paginacion {...paginacion} total={ordenadas.length} />
 
             {toast && (
                 <div className={`fixed bottom-6 right-6 z-50 rounded-xl px-5 py-3 text-sm font-medium text-white shadow-lg ${toast.ok ? "bg-emerald-600" : "bg-red-600"}`}>

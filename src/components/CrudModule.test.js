@@ -47,6 +47,7 @@ test("consulta DNI y precarga los datos de persona sin guardar el registro", asy
         direccion: "Av. Ica 123",
     });
     render(<CrudModule entidadKey="huespedes" />);
+    await waitFor(() => expect(screen.queryByText("Cargando...")).not.toBeInTheDocument());
 
     await userEvent.click(await screen.findByRole("button", { name: "Nuevo" }));
     await userEvent.type(screen.getByLabelText(/N° de documento/), "12345678");
@@ -70,6 +71,7 @@ test("consulta RUC y precarga los datos de empresa sin guardar el registro", asy
         direccion: "Av. Principal 456",
     });
     render(<CrudModule entidadKey="empresa" />);
+    await waitFor(() => expect(screen.queryByText("Cargando...")).not.toBeInTheDocument());
 
     await userEvent.click(await screen.findByRole("button", { name: "Nuevo" }));
     await userEvent.type(screen.getByLabelText("RUC *"), "20123456789");
@@ -81,4 +83,78 @@ test("consulta RUC y precarga los datos de empresa sin guardar el registro", asy
     expect(screen.getByLabelText("RUC *")).toHaveValue("20123456789");
     expect(screen.getByLabelText("Dirección")).toHaveValue("Av. Principal 456");
     expect(consultarDocumento).toHaveBeenCalledWith("ruc", "20123456789");
+});
+
+test("la paginación cambia de página y ajusta la cantidad de registros mostrados", async () => {
+    listarPaginado.mockImplementation(async (_tabla, _pk, opciones) => {
+        const total = 60;
+        const totalPaginas = Math.ceil(total / opciones.pageSize);
+        const inicio = (opciones.pagina - 1) * opciones.pageSize;
+        const cantidad = Math.min(opciones.pageSize, total - inicio);
+
+        return {
+            data: Array.from({ length: cantidad }, (_, index) => ({
+                id_empresa: inicio + index + 1,
+                ruc: String(20000000000 + inicio + index + 1),
+                razon_social: `Empresa ${inicio + index + 1}`,
+            })),
+            total,
+            pagina: opciones.pagina,
+            totalPaginas,
+        };
+    });
+    render(<CrudModule entidadKey="empresa" />);
+
+    await screen.findByText("Empresa 1");
+    await waitFor(() => expect(screen.queryByText("Cargando...")).not.toBeInTheDocument());
+    expect(screen.getByText(/Mostrando 1–25 de 60 registros/)).toBeInTheDocument();
+
+    const siguiente = screen.getByRole("button", { name: "Siguiente" });
+    await waitFor(() => expect(siguiente).toBeEnabled());
+    await userEvent.click(siguiente);
+    await screen.findByText("Empresa 26");
+    await waitFor(() =>
+        expect(listarPaginado).toHaveBeenLastCalledWith(
+            "empresa",
+            "id_empresa",
+            expect.objectContaining({ pagina: 2, pageSize: 25 })
+        )
+    );
+    await waitFor(() => expect(screen.queryByText("Cargando...")).not.toBeInTheDocument());
+    await waitFor(() =>
+        expect(
+            screen.getByText((_, elemento) =>
+                elemento.tagName === "SPAN" && elemento.textContent.includes("Mostrando")
+            )
+        ).toHaveTextContent(/26.*50.*60/)
+    );
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Registros por página" }), "50");
+    await screen.findByText("Empresa 50");
+    await waitFor(() =>
+        expect(listarPaginado).toHaveBeenLastCalledWith(
+            "empresa",
+            "id_empresa",
+            expect.objectContaining({ pagina: 1, pageSize: 50 })
+        )
+    );
+    await waitFor(() => expect(screen.queryByText("Cargando...")).not.toBeInTheDocument());
+    expect(
+        screen.getByText((_, elemento) =>
+            elemento.tagName === "SPAN" && elemento.textContent.includes("Mostrando")
+        )
+    ).toHaveTextContent(/1.*50.*60/);
+    expect(screen.queryByText("Empresa 51")).not.toBeInTheDocument();
+});
+
+test("mantiene visible el error de una tabla relacionada mientras carga el listado", async () => {
+    listar.mockImplementation(async (tabla) => {
+        if (tabla === "tipo_identidad") throw new Error("acceso denegado");
+        return [];
+    });
+    render(<CrudModule entidadKey="huespedes" />);
+
+    expect(
+        await screen.findByText(/No se pudieron leer las tablas relacionadas: acceso denegado/)
+    ).toBeInTheDocument();
 });

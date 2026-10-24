@@ -41,6 +41,21 @@ const leer = async (consulta) => {
     return data || [];
 };
 
+const leerTodos = async (crearConsulta) => {
+    const tamanoLote = 1000;
+    const filas = [];
+    let desde = 0;
+    let lote;
+
+    do {
+        lote = await leer(crearConsulta().range(desde, desde + tamanoLote - 1));
+        filas.push(...lote);
+        desde += tamanoLote;
+    } while (lote.length === tamanoLote);
+
+    return filas;
+};
+
 const insertarFila = async (tabla, fila) => {
     const { data, error } = await supabase
         .from(tabla)
@@ -400,15 +415,14 @@ export const registrarPago = async ({
     return movimiento;
 };
 
-export const listarPagos = async (limite = 100) => {
+export const listarPagos = async () => {
     const [movimientos, conceptos, tipos, metodos, usuarios, recepciones] = await Promise.all([
-        leer(
+        leerTodos(() =>
             supabase
                 .from("movimiento_caja")
                 .select("*")
                 .eq("estado", "1")
                 .order("id_movimientocaja", { ascending: false })
-                .limit(limite)
         ),
         leer(supabase.from("concepto_caja").select("*").eq("estado", "1")),
         leer(supabase.from("tipo_movimiento_caja").select("*").eq("estado", "1")),

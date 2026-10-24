@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ENTIDADES } from "../config/entidades";
 import {
@@ -28,9 +28,12 @@ const CrudModule = ({ entidadKey }) => {
     const [refs, setRefs] = useState({});
     const [cargando, setCargando] = useState(true);
     const [errorCarga, setErrorCarga] = useState("");
+    const [errorRefs, setErrorRefs] = useState("");
+    const solicitudActual = useRef(0);
 
     // Paginación, búsqueda y filtros
     const [pagina, setPagina] = useState(1);
+    const [pageSize, setPageSize] = useState(POR_PAGINA);
     const [total, setTotal] = useState(0);
     const [totalPaginas, setTotalPaginas] = useState(1);
     const [busqueda, setBusqueda] = useState("");
@@ -70,39 +73,52 @@ const CrudModule = ({ entidadKey }) => {
             nuevasRefs[r.tabla] = resultados[i];
         });
         setRefs(nuevasRefs);
+        setErrorRefs("");
     }, [campos, entidad]);
 
     useEffect(() => {
         cargarRefs().catch((e) =>
-            setErrorCarga(`No se pudieron leer las tablas relacionadas: ${e.message}`)
+            setErrorRefs(`No se pudieron leer las tablas relacionadas: ${e.message}`)
         );
     }, [cargarRefs]);
 
     // ---------- Leer (página del listado) ----------
     const cargarPagina = useCallback(async () => {
+        const solicitud = ++solicitudActual.current;
         setCargando(true);
         setErrorCarga("");
         try {
             const resultado = await listarPaginado(tabla, pk, {
                 pagina,
+                pageSize,
                 busqueda: busquedaDebounced,
                 columnasBusqueda: entidad.buscarEn || [],
                 filtros,
             });
+            if (solicitud !== solicitudActual.current) return resultado;
+
+            if (pagina > resultado.totalPaginas) {
+                setPagina(resultado.totalPaginas);
+                return resultado;
+            }
+
             setFilas(resultado.data);
             setTotal(resultado.total);
             setTotalPaginas(resultado.totalPaginas);
             return resultado;
         } catch (e) {
+            if (solicitud !== solicitudActual.current) {
+                return { data: [], total: 0, pagina, totalPaginas: 1 };
+            }
             setFilas([]);
             setTotal(0);
             setTotalPaginas(1);
             setErrorCarga(`No se pudo leer "${tabla}": ${e.message}`);
             return { data: [], total: 0, pagina, totalPaginas: 1 };
         } finally {
-            setCargando(false);
+            if (solicitud === solicitudActual.current) setCargando(false);
         }
-    }, [tabla, pk, pagina, busquedaDebounced, filtros, entidad]);
+    }, [tabla, pk, pagina, pageSize, busquedaDebounced, filtros, entidad]);
 
     useEffect(() => {
         cargarPagina();
@@ -272,8 +288,8 @@ const CrudModule = ({ entidadKey }) => {
             avisar(mensajeOk);
             cerrarForm();
             const r = await cargarPagina();   // refresco de la página actual
-            if (r.data.length === 0 && pagina > 1) {
-                setPagina(pagina - 1);        // retrocede si la página quedó vacía
+            if (pagina > r.totalPaginas) {
+                setPagina(r.totalPaginas);
             }
         } catch (e) {
             avisar(e.message, false);
@@ -302,8 +318,8 @@ const CrudModule = ({ entidadKey }) => {
         "w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100";
 
     // Datos de la paginación para el pie de tabla
-    const mostrarDesde = total === 0 ? 0 : (pagina - 1) * POR_PAGINA + 1;
-    const mostrarHasta = Math.min(pagina * POR_PAGINA, total);
+    const mostrarDesde = total === 0 ? 0 : (pagina - 1) * pageSize + 1;
+    const mostrarHasta = Math.min(pagina * pageSize, total);
     const ventanaInicio = Math.max(1, Math.min(pagina - 3, totalPaginas - 6));
     const ventanaFin = Math.min(totalPaginas, ventanaInicio + 6);
     const numerosPagina = [];
@@ -444,10 +460,10 @@ const CrudModule = ({ entidadKey }) => {
             )}
 
             {/* Error de lectura */}
-            {errorCarga && (
+            {(errorCarga || errorRefs) && (
                 <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
                     <i className="bi bi-exclamation-triangle mr-2"></i>
-                    {errorCarga}
+                    {[errorCarga, errorRefs].filter(Boolean).join(" ")}
                 </div>
             )}
 
@@ -459,7 +475,10 @@ const CrudModule = ({ entidadKey }) => {
                         <input
                             type="text"
                             value={busqueda}
-                            onChange={(e) => setBusqueda(e.target.value)}
+                            onChange={(e) => {
+                                setBusqueda(e.target.value);
+                                setPagina(1);
+                            }}
                             placeholder={`Buscar en ${entidad.titulo.toLowerCase()}...`}
                             className={`${inputClase} pl-9`}
                         />
@@ -529,12 +548,14 @@ const CrudModule = ({ entidadKey }) => {
                                             <td className="whitespace-nowrap px-5 py-3">
                                                 <button
                                                     onClick={() => abrirEditar(fila)}
+                                                    disabled={cargando || guardando}
                                                     className="mr-2 rounded-lg bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-200"
                                                 >
                                                     <i className="bi bi-pencil mr-1"></i>Editar
                                                 </button>
                                                 <button
                                                     onClick={() => borrar(fila)}
+                                                    disabled={cargando || guardando}
                                                     className="rounded-lg bg-red-100 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-200"
                                                 >
                                                     <i className="bi bi-trash mr-1"></i>Eliminar
@@ -551,21 +572,40 @@ const CrudModule = ({ entidadKey }) => {
 
             {/* Paginación */}
             <div className="mb-2 mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-600">
-                <span>
-                    Mostrando {mostrarDesde}–{mostrarHasta} de {total} registro{total === 1 ? "" : "s"}
-                </span>
+                <div className="flex flex-wrap items-center gap-4">
+                    <span>
+                        Mostrando {mostrarDesde}–{mostrarHasta} de {total} registro{total === 1 ? "" : "s"}
+                    </span>
+                    <label className="flex items-center gap-2">
+                        <span>Por página</span>
+                        <select
+                            aria-label="Registros por página"
+                            value={pageSize}
+                            onChange={(e) => {
+                                setPageSize(Number(e.target.value));
+                                setPagina(1);
+                            }}
+                            className="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-600"
+                        >
+                            {[10, 25, 50, 100].map((cantidad) => (
+                                <option key={cantidad} value={cantidad}>{cantidad}</option>
+                            ))}
+                        </select>
+                    </label>
+                </div>
                 <div className="flex flex-wrap items-center gap-1">
                     <button
                         onClick={() => setPagina(1)}
-                        disabled={pagina <= 1}
+                        disabled={cargando || pagina <= 1}
+                        aria-label="Primera página"
                         className={claseBotonPag}
                         title="Primera página"
                     >
                         <i className="bi bi-chevrons-left"></i>
                     </button>
                     <button
-                        onClick={() => setPagina(pagina - 1)}
-                        disabled={pagina <= 1}
+                        onClick={() => setPagina((actual) => Math.max(1, actual - 1))}
+                        disabled={cargando || pagina <= 1}
                         className={claseBotonPag}
                     >
                         Anterior
@@ -574,9 +614,11 @@ const CrudModule = ({ entidadKey }) => {
                         <button
                             key={n}
                             onClick={() => setPagina(n)}
+                            disabled={cargando}
+                            aria-current={n === pagina ? "page" : undefined}
                             className={
                                 n === pagina
-                                    ? "rounded-lg bg-blue-800 px-3 py-1.5 text-xs font-semibold text-white"
+                                    ? "rounded-lg bg-blue-800 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
                                     : claseBotonPag
                             }
                         >
@@ -585,16 +627,17 @@ const CrudModule = ({ entidadKey }) => {
                     ))}
                     <button
                         onClick={() => setPagina(pagina + 1)}
-                        disabled={pagina >= totalPaginas}
+                        disabled={cargando || pagina >= totalPaginas}
                         className={claseBotonPag}
                     >
                         Siguiente
                     </button>
                     <button
                         onClick={() => setPagina(totalPaginas)}
-                        disabled={pagina >= totalPaginas}
+                        disabled={cargando || pagina >= totalPaginas}
                         className={claseBotonPag}
                         title="Última página"
+                        aria-label="Última página"
                     >
                         <i className="bi bi-chevrons-right"></i>
                     </button>

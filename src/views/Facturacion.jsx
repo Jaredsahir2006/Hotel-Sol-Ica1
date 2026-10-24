@@ -6,6 +6,8 @@ import {
     listarRecepcionesFacturables,
 } from "../services/procesosService";
 import { fechaHora, soles } from "../utils/format";
+import Paginacion from "../components/Paginacion";
+import { usePaginacion } from "../hooks/usePaginacion";
 
 const inputClase =
     "w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100";
@@ -101,6 +103,8 @@ const Facturacion = () => {
     });
 
     const totalFacturado = filtrados.reduce((s, c) => s + (Number(c.total) || 0), 0);
+    const paginacion = usePaginacion(filtrados.length);
+    const comprobantesPagina = filtrados.slice(paginacion.desde, paginacion.hasta);
 
     return (
         <div>
@@ -192,7 +196,14 @@ const Facturacion = () => {
                         <span className="text-sm text-slate-500">
                             Total: <strong className="text-slate-800">{soles(totalFacturado)}</strong>
                         </span>
-                        <select value={filtro} onChange={(e) => setFiltro(e.target.value)} className={`${inputClase} w-auto`}>
+                        <select
+                            value={filtro}
+                            onChange={(e) => {
+                                setFiltro(e.target.value);
+                                paginacion.setPagina(1);
+                            }}
+                            className={`${inputClase} w-auto`}
+                        >
                             <option value="TODOS">Todos</option>
                             <option value="FACTURA">Facturas</option>
                             <option value="BOLETA">Boletas</option>
@@ -200,7 +211,10 @@ const Facturacion = () => {
                         <input
                             type="text"
                             value={busqueda}
-                            onChange={(e) => setBusqueda(e.target.value)}
+                            onChange={(e) => {
+                                setBusqueda(e.target.value);
+                                paginacion.setPagina(1);
+                            }}
                             placeholder="Buscar comprobante..."
                             className={`${inputClase} w-auto`}
                         />
@@ -230,7 +244,7 @@ const Facturacion = () => {
                                     <td colSpan={7} className="px-5 py-10 text-center text-gray-400">Sin comprobantes</td>
                                 </tr>
                             ) : (
-                                filtrados.map((c) => (
+                                comprobantesPagina.map((c) => (
                                     <tr key={`${c.tipo}-${c[c.pk]}`} className="hover:bg-slate-50">
                                         <td className="px-5 py-3">
                                             <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${c.tipo === "FACTURA" ? "bg-blue-100 text-blue-700" : "bg-amber-100 text-amber-700"}`}>
@@ -250,6 +264,8 @@ const Facturacion = () => {
                     </table>
                 </div>
             </section>
+
+            <Paginacion {...paginacion} total={filtrados.length} cargando={cargando} />
 
             {toast && (
                 <div className={`fixed bottom-6 right-6 z-50 rounded-xl px-5 py-3 text-sm font-medium text-white shadow-lg ${toast.ok ? "bg-emerald-600" : "bg-red-600"}`}>

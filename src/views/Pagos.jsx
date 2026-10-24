@@ -10,6 +10,8 @@ import {
     registrarPago,
 } from "../services/procesosService";
 import { fechaHora, soles } from "../utils/format";
+import Paginacion from "../components/Paginacion";
+import { usePaginacion } from "../hooks/usePaginacion";
 
 const inputClase =
     "w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100";
@@ -91,6 +93,9 @@ const Pagos = () => {
     const recepcionSeleccionada = recepciones.find(
         (r) => String(r.id_recepcion) === String(form.id_recepcion)
     );
+
+    const paginacion = usePaginacion(pagos.length);
+    const pagosPagina = pagos.slice(paginacion.desde, paginacion.hasta);
 
     const cambiar = (e) => {
         const { name, value } = e.target;
@@ -432,7 +437,7 @@ const Pagos = () => {
                                     <td colSpan={7} className="px-5 py-10 text-center text-gray-400">Sin movimientos</td>
                                 </tr>
                             ) : (
-                                pagos.map((p) => (
+                                pagosPagina.map((p) => (
                                     <tr key={p.id_movimientocaja} className="hover:bg-slate-50">
                                         <td className="px-5 py-3 text-slate-700">{fechaHora(p.f_movimiento)}</td>
                                         <td className="px-5 py-3">
@@ -454,6 +459,8 @@ const Pagos = () => {
                     </table>
                 </div>
             </section>
+
+            <Paginacion {...paginacion} total={pagos.length} cargando={cargando} />
 
             {toast && (
                 <div className={`fixed bottom-6 right-6 z-50 rounded-xl px-5 py-3 text-sm font-medium text-white shadow-lg ${toast.ok ? "bg-emerald-600" : "bg-red-600"}`}>

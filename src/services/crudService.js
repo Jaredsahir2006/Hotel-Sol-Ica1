@@ -44,9 +44,17 @@ export const POR_PAGINA = 25;
 export const listarPaginado = async (
     tabla,
     pk,
-    { pagina = 1, busqueda = "", columnasBusqueda = [], filtros = {} } = {}
+    {
+        pagina = 1,
+        pageSize = POR_PAGINA,
+        busqueda = "",
+        columnasBusqueda = [],
+        filtros = {},
+    } = {}
 ) => {
-    const desde = (pagina - 1) * POR_PAGINA;
+    const tamanoPagina = Math.min(100, Math.max(1, Math.floor(Number(pageSize) || POR_PAGINA)));
+    const numeroPagina = Math.max(1, Math.floor(Number(pagina) || 1));
+    const desde = (numeroPagina - 1) * tamanoPagina;
 
     let consulta = supabase
         .from(tabla)
@@ -69,15 +77,15 @@ export const listarPaginado = async (
 
     const { data, error, count } = await consulta
         .order(pk, { ascending: true })
-        .range(desde, desde + POR_PAGINA - 1);
+        .range(desde, desde + tamanoPagina - 1);
     lanzar(error);
 
     const total = count || 0;
     return {
         data,
         total,
-        pagina,
-        totalPaginas: Math.max(1, Math.ceil(total / POR_PAGINA)),
+        pagina: numeroPagina,
+        totalPaginas: Math.max(1, Math.ceil(total / tamanoPagina)),
     };
 };
 
