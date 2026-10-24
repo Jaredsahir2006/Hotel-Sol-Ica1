@@ -1,5 +1,19 @@
 # Getting Started with Create React App
 
+## Configuración de la API
+
+El frontend usa `http://localhost:5000/api` durante el desarrollo local. En
+producción usa `/api` en el mismo dominio que sirve el frontend, por lo que el
+servidor web debe reenviar esa ruta al backend. Si el backend tiene otro dominio,
+define `REACT_APP_API_URL` con la URL completa, por ejemplo
+`https://api.ejemplo.com/api`.
+
+Create React App incorpora las variables `REACT_APP_*` al compilar. Configura
+`REACT_APP_API_URL` en el entorno de compilación y vuelve a generar y publicar
+el frontend después de cambiarla. No uses `localhost` para el backend de una
+aplicación publicada: desde el navegador de cada visitante apuntaría a su propio
+equipo.
+
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
 ## Available Scripts
@@ -8,8 +22,13 @@ In the project directory, you can run:
 
 ### `npm start`
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+Starts both the backend API (`http://localhost:5000`) and the frontend
+(`http://localhost:3000`). Open [http://localhost:3000](http://localhost:3000)
+in your browser. Both services use this terminal; press Ctrl+C to stop them.
+
+The backend requires `backend/.env` with valid Supabase settings. To run only
+one service, use `npm run start:backend` or `npm run start:frontend` in the
+project directory.
 
 The page will reload when you make changes.\
 You may also see any lint errors in the console.
