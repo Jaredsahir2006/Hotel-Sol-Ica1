@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 
 import {
     abrirCaja,
@@ -7,6 +9,8 @@ import {
     listarCatalogosPago,
     listarPagos,
     listarRecepcionesActivas,
+    obtenerArqueoCaja,
+    obtenerUltimaAperturaCaja,
     registrarPago,
 } from "../services/procesosService";
 import { fechaHora, soles } from "../utils/format";
@@ -26,6 +30,14 @@ const Pagos = () => {
     const [error, setError] = useState("");
     const [toast, setToast] = useState(null);
     const [mostrarApertura, setMostrarApertura] = useState(false);
+    const [aperturaAnterior, setAperturaAnterior] = useState(null);
+    const [consultandoAnterior, setConsultandoAnterior] = useState(false);
+    const [turnoCierre, setTurnoCierre] = useState(null);
+    const [arqueo, setArqueo] = useState(null);
+    const [conteoMetodos, setConteoMetodos] = useState({});
+    const [fondoSiguiente, setFondoSiguiente] = useState("");
+    const [observacionCierre, setObservacionCierre] = useState("");
+    const [reporteCierre, setReporteCierre] = useState(null);
 
     const usuario = useMemo(() => {
         try {
@@ -49,6 +61,7 @@ const Pagos = () => {
     const [formApertura, setFormApertura] = useState({
         id_caja: "",
         monto_inicial: "",
+        observacion: "",
     });
 
     const avisar = (mensaje, ok = true) => {
@@ -96,6 +109,13 @@ const Pagos = () => {
 
     const paginacion = usePaginacion(pagos.length);
     const pagosPagina = pagos.slice(paginacion.desde, paginacion.hasta);
+
+    const metodoEfectivoArqueo = arqueo?.metodos.find((metodo) => /efectivo/i.test(metodo.nombre))
+        || arqueo?.metodos.find((metodo) => !metodo.id_metodopago);
+    const efectivoContadoArqueo = Number(
+        conteoMetodos[String(metodoEfectivoArqueo?.clave || metodoEfectivoArqueo?.id_metodopago || "efectivo")] || 0
+    );
+    const retiroEstimado = Math.max(0, efectivoContadoArqueo - Number(fondoSiguiente || 0));
 
     const cambiar = (e) => {
         const { name, value } = e.target;
@@ -166,8 +186,13 @@ const Pagos = () => {
                 id_caja: Number(formApertura.id_caja),
                 id_usuario: usuario?.id_usuario,
                 monto_inicial: montoInicial,
+                observacion: formApertura.observacion,
+                saldo_anterior: aperturaAnterior
+                    ? aperturaAnterior.saldo_siguiente ?? aperturaAnterior.monto_declarado ?? aperturaAnterior.monto_sistema
+                    : null,
             });
-            setFormApertura({ id_caja: "", monto_inicial: "" });
+            setFormApertura({ id_caja: "", monto_inicial: "", observacion: "" });
+            setAperturaAnterior(null);
             setMostrarApertura(false);
             await cargar();
             avisar("Caja aperturada correctamente.");
@@ -178,21 +203,63 @@ const Pagos = () => {
         }
     };
 
-    const cerrar = async (apertura) => {
-        const valor = window.prompt(
-            `Monto declarado para cerrar el turno ${apertura.numero_turno}:`,
-            String(apertura.monto_sistema || 0)
-        );
-        if (valor === null) return;
-        const declarado = Number(valor);
-        if (Number.isNaN(declarado) || declarado < 0) {
-            avisar("El monto declarado no es válido.", false);
+    const prepararCierre = async (apertura) => {
+        setGuardando(true);
+        try {
+            const resumen = await obtenerArqueoCaja(apertura.id_aperturacaja);
+            setTurnoCierre(apertura);
+            setArqueo(resumen);
+            setConteoMetodos(Object.fromEntries(
+                resumen.metodos.map((metodo) => [String(metodo.clave || metodo.id_metodopago || "efectivo"), ""])
+            ));
+            setFondoSiguiente("");
+            setObservacionCierre("");
+            setReporteCierre(null);
+        } catch (errorArqueo) {
+            avisar(errorArqueo.message, false);
+        } finally {
+            setGuardando(false);
+        }
+    };
+
+    const confirmarCierre = async (e) => {
+        e.preventDefault();
+        if (!arqueo || !turnoCierre) return;
+        const efectivo = arqueo.metodos.find((metodo) => /efectivo/i.test(metodo.nombre))
+            || arqueo.metodos.find((metodo) => !metodo.id_metodopago);
+        const idEfectivo = String(efectivo?.clave || efectivo?.id_metodopago || "efectivo");
+        const declarado = Number(conteoMetodos[idEfectivo]);
+        const conteo = arqueo.metodos.map((metodo) => ({
+            id_metodopago: metodo.id_metodopago,
+            clave: metodo.clave,
+            metodo: metodo.nombre,
+            contado: conteoMetodos[String(metodo.clave || metodo.id_metodopago || "efectivo")],
+        }));
+        if (conteo.some((item) => item.contado === "" || !Number.isFinite(Number(item.contado)) || Number(item.contado) < 0)) {
+            avisar("Ingresa el monto contado para cada método de pago, incluso si es S/ 0.00.", false);
+            return;
+        }
+        if (!Number.isFinite(declarado) || declarado < 0) {
+            avisar("Ingresa el efectivo contado para cerrar el turno.", false);
+            return;
+        }
+        const fondo = Number(fondoSiguiente || 0);
+        if (!Number.isFinite(fondo) || fondo < 0 || fondo > declarado) {
+            avisar("El fondo siguiente debe ser válido y no puede superar el efectivo contado.", false);
             return;
         }
 
         setGuardando(true);
         try {
-            const resultado = await cerrarCaja(apertura.id_aperturacaja, { monto_declarado: declarado });
+            const resultado = await cerrarCaja(turnoCierre.id_aperturacaja, {
+                monto_declarado: declarado,
+                observacion: observacionCierre,
+                conteo_metodos: conteo,
+                fondo_siguiente: fondo,
+            });
+            setReporteCierre({ apertura: turnoCierre, arqueo, resultado });
+            setTurnoCierre(null);
+            setArqueo(null);
             await cargar();
             const diferencia = Number(resultado.diferencia) || 0;
             avisar(diferencia === 0
@@ -205,7 +272,72 @@ const Pagos = () => {
         }
     };
 
+    const seleccionarCaja = async (idCaja) => {
+        setFormApertura((prev) => ({ ...prev, id_caja: idCaja }));
+        setAperturaAnterior(null);
+        if (!idCaja) {
+            setFormApertura((prev) => ({ ...prev, monto_inicial: "" }));
+            return;
+        }
+        const caja = catalogos.cajas.find((item) => String(item.id_caja) === String(idCaja));
+        setFormApertura((prev) => ({
+            ...prev,
+            monto_inicial: String(Number(caja?.monto_base || 0).toFixed(2)),
+        }));
+        setConsultandoAnterior(true);
+        try {
+            const anterior = await obtenerUltimaAperturaCaja(idCaja);
+            setAperturaAnterior(anterior);
+            if (anterior) {
+                const saldo = Number(anterior.saldo_siguiente ?? anterior.monto_declarado ?? anterior.monto_sistema ?? 0);
+                setFormApertura((prev) => ({ ...prev, monto_inicial: saldo.toFixed(2) }));
+            }
+        } catch (errorAnterior) {
+            avisar(errorAnterior.message, false);
+        } finally {
+            setConsultandoAnterior(false);
+        }
+    };
+
+    const descargarReporteCierre = () => {
+        if (!reporteCierre) return;
+        const { apertura, resultado } = reporteCierre;
+        const documento = new jsPDF();
+        documento.setFontSize(16);
+        documento.text("Reporte de cierre de caja", 14, 18);
+        documento.setFontSize(10);
+        documento.text(`Turno: ${apertura.numero_turno} · ${apertura.caja_nombre}`, 14, 27);
+        documento.text(`Cajero: ${apertura.usuario_nombre}`, 14, 33);
+        documento.text(`Apertura: ${fechaHora(apertura.f_apertura)}`, 14, 39);
+        documento.text(`Cierre: ${fechaHora(resultado.f_cierre)}`, 14, 45);
+        autoTable(documento, {
+            startY: 52,
+            head: [["Método de pago", "Esperado", "Contado", "Diferencia"]],
+            body: resultado.arqueo.map((item) => [
+                item.metodo,
+                soles(item.esperado),
+                soles(item.contado),
+                soles(item.contado - item.esperado),
+            ]),
+        });
+        const finalY = documento.lastAutoTable?.finalY || 60;
+        documento.text(`Efectivo esperado: ${soles(resultado.monto_sistema)}`, 14, finalY + 9);
+        documento.text(`Efectivo contado: ${soles(resultado.monto_declarado)}`, 14, finalY + 15);
+        documento.text(`Diferencia de efectivo: ${soles(resultado.diferencia)}`, 14, finalY + 21);
+        documento.text(`Fondo siguiente: ${soles(resultado.fondo_siguiente)}`, 14, finalY + 27);
+        documento.text(`Retiro a caja fuerte: ${soles(Number(resultado.monto_declarado) - Number(resultado.fondo_siguiente))}`, 14, finalY + 33);
+        if (observacionCierre) documento.text(`Observación: ${observacionCierre}`, 14, finalY + 42, { maxWidth: 180 });
+        documento.save(`cierre-caja-${apertura.numero_turno}.pdf`);
+    };
+
     const totalDia = pagos.reduce((s, p) => s + (p.tipo_signo === "-" ? -Number(p.monto) : Number(p.monto)), 0);
+    const saldoAnterior = Number(
+        aperturaAnterior?.saldo_siguiente
+        ?? aperturaAnterior?.monto_declarado
+        ?? aperturaAnterior?.monto_sistema
+        ?? 0
+    );
+    const diferenciaApertura = Number(formApertura.monto_inicial || 0) - saldoAnterior;
 
     return (
         <div>
@@ -239,12 +371,12 @@ const Pagos = () => {
             )}
 
             {mostrarApertura && (
-                <form onSubmit={abrir} className="mb-6 grid gap-4 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm sm:grid-cols-3">
+                <form onSubmit={abrir} className="mb-6 grid gap-4 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm sm:grid-cols-2">
                     <label className="block text-xs font-semibold text-slate-700">
                         Caja *
                         <select
                             value={formApertura.id_caja}
-                            onChange={(e) => setFormApertura((p) => ({ ...p, id_caja: e.target.value }))}
+                            onChange={(e) => seleccionarCaja(e.target.value)}
                             className={`${inputClase} mt-1.5 font-normal`}
                         >
                             <option value="">-- Seleccione --</option>
@@ -259,7 +391,7 @@ const Pagos = () => {
                         </select>
                     </label>
                     <label className="block text-xs font-semibold text-slate-700">
-                        Monto inicial (S/) *
+                        Fondo inicial contado (S/) *
                         <input
                             type="number"
                             min="0"
@@ -269,10 +401,42 @@ const Pagos = () => {
                             className={`${inputClase} mt-1.5 font-normal`}
                         />
                     </label>
-                    <div className="flex items-end gap-2">
+                    {consultandoAnterior && (
+                        <p className="text-sm text-slate-500 sm:col-span-2">Consultando el cierre anterior...</p>
+                    )}
+                    {aperturaAnterior && (
+                        <div className={`rounded-xl border p-4 text-sm sm:col-span-2 ${Math.abs(diferenciaApertura) >= 0.01 ? "border-amber-200 bg-amber-50 text-amber-900" : "border-blue-200 bg-blue-50 text-blue-900"}`}>
+                            <p>
+                                Último cierre: <strong>{aperturaAnterior.numero_turno}</strong> · fondo para el siguiente turno{" "}
+                                <strong>{soles(saldoAnterior)}</strong>.
+                                Verifica el conteo físico antes de confirmar.
+                            </p>
+                            <p className="mt-1">
+                                Diferencia inicial:{" "}
+                                <strong>{soles(diferenciaApertura)}</strong>
+                                {Math.abs(diferenciaApertura) >= 0.01 && " · revisa y deja constancia de la diferencia"}
+                            </p>
+                        </div>
+                    )}
+                    {!aperturaAnterior && formApertura.id_caja && !consultandoAnterior && (
+                        <p className="text-sm text-slate-500 sm:col-span-2">
+                            No hay cierre previo para esta caja. Se propone el monto base; confirma el efectivo contado.
+                        </p>
+                    )}
+                    <label className="block text-xs font-semibold text-slate-700 sm:col-span-2">
+                        Notas de apertura
+                        <textarea
+                            value={formApertura.observacion}
+                            onChange={(e) => setFormApertura((prev) => ({ ...prev, observacion: e.target.value }))}
+                            rows="2"
+                            className={`${inputClase} mt-1.5 font-normal`}
+                            placeholder="Indica diferencias, novedades o estado del fondo."
+                        />
+                    </label>
+                    <div className="flex items-end gap-2 sm:col-span-2">
                         <button
                             type="submit"
-                            disabled={guardando}
+                            disabled={guardando || consultandoAnterior}
                             className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                         >
                             Aperturar
@@ -403,11 +567,11 @@ const Pagos = () => {
                                         <div><span className="text-gray-400">Sistema</span><p className="font-semibold">{soles(a.monto_sistema)}</p></div>
                                     </div>
                                     <button
-                                        onClick={() => cerrar(a)}
+                                        onClick={() => prepararCierre(a)}
                                         disabled={guardando}
                                         className="mt-3 w-full rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
                                     >
-                                        Cerrar caja
+                                        Iniciar arqueo y cierre
                                     </button>
                                 </div>
                             ))}
@@ -415,6 +579,145 @@ const Pagos = () => {
                     )}
                 </section>
             </div>
+
+            {turnoCierre && arqueo && (
+                <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/50 p-4">
+                    <form
+                        onSubmit={confirmarCierre}
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="titulo-arqueo"
+                        className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"
+                    >
+                        <div className="mb-5 flex items-start justify-between gap-4">
+                            <div>
+                                <h3 id="titulo-arqueo" className="text-xl font-bold text-slate-900">
+                                    Arqueo del turno {turnoCierre.numero_turno}
+                                </h3>
+                                <p className="mt-1 text-sm text-slate-500">
+                                    {turnoCierre.caja_nombre} · Fondo inicial {soles(arqueo.apertura.monto_inicial)}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => { setTurnoCierre(null); setArqueo(null); }}
+                                className="rounded-lg px-3 py-1 text-slate-500 hover:bg-slate-100"
+                                aria-label="Cancelar arqueo"
+                            >
+                                <i className="bi bi-x-lg"></i>
+                            </button>
+                        </div>
+                        <p className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                            Compara el importe esperado por el sistema con el efectivo contado y los comprobantes de cada medio.
+                            Los valores esperados se calculan con los movimientos del turno.
+                        </p>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left text-sm">
+                                <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                                    <tr>
+                                        <th className="px-3 py-2">Método de pago</th>
+                                        <th className="px-3 py-2">Esperado</th>
+                                        <th className="px-3 py-2">Contado / verificado</th>
+                                        <th className="px-3 py-2">Diferencia</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {arqueo.metodos.map((metodo) => {
+                                        const idMetodo = String(metodo.clave || metodo.id_metodopago || "efectivo");
+                                        const contado = conteoMetodos[idMetodo];
+                                        const diferencia = contado === "" ? null : Number(contado) - metodo.esperado;
+                                        return (
+                                            <tr key={idMetodo}>
+                                                <td className="px-3 py-3 font-medium text-slate-800">{metodo.nombre}</td>
+                                                <td className="px-3 py-3">{soles(metodo.esperado)}</td>
+                                                <td className="px-3 py-2">
+                                                    <input
+                                                        aria-label={`Contado ${metodo.nombre}`}
+                                                        type="number"
+                                                        min="0"
+                                                        step="0.01"
+                                                        required
+                                                        value={contado}
+                                                        onChange={(e) => setConteoMetodos((prev) => ({ ...prev, [idMetodo]: e.target.value }))}
+                                                        className={`${inputClase} min-w-32`}
+                                                    />
+                                                </td>
+                                                <td className={`px-3 py-3 font-semibold ${diferencia === null || diferencia === 0 ? "text-slate-500" : "text-amber-700"}`}>
+                                                    {diferencia === null ? "—" : soles(diferencia)}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                            <label className="block text-xs font-semibold text-slate-700">
+                                Efectivo que queda como fondo siguiente (S/)
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={fondoSiguiente}
+                                    onChange={(e) => setFondoSiguiente(e.target.value)}
+                                    className={`${inputClase} mt-1.5 font-normal`}
+                                />
+                            </label>
+                            <div className="rounded-xl bg-slate-50 p-3 text-sm">
+                                <p>Esperado en efectivo: <strong>{soles(arqueo.apertura.monto_sistema)}</strong></p>
+                                <p>Retiro a caja fuerte: <strong>{soles(retiroEstimado)}</strong></p>
+                            </div>
+                            <label className="block text-xs font-semibold text-slate-700 sm:col-span-2">
+                                Observaciones de cierre
+                                <textarea
+                                    value={observacionCierre}
+                                    onChange={(e) => setObservacionCierre(e.target.value)}
+                                    rows="2"
+                                    className={`${inputClase} mt-1.5 font-normal`}
+                                    placeholder="Registra diferencias, vouchers pendientes u otras novedades."
+                                />
+                            </label>
+                        </div>
+                        <div className="mt-5 flex flex-wrap justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={() => { setTurnoCierre(null); setArqueo(null); }}
+                                className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-200"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={guardando}
+                                className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                            >
+                                {guardando ? "Cerrando..." : "Confirmar cierre"}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            )}
+
+            {reporteCierre && (
+                <section className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                    <div className="text-sm text-emerald-900">
+                        <p className="font-semibold">Cierre de {reporteCierre.apertura.numero_turno} registrado.</p>
+                        <p>
+                            Esperado: {soles(reporteCierre.resultado.monto_sistema)} · contado:{" "}
+                            {soles(reporteCierre.resultado.monto_declarado)} · diferencia:{" "}
+                            {soles(reporteCierre.resultado.diferencia)}
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={descargarReporteCierre}
+                        className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800"
+                    >
+                        <i className="bi bi-file-earmark-pdf mr-2"></i>
+                        Descargar reporte PDF
+                    </button>
+                </section>
+            )}
 
             <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4">

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
     emitirComprobante,
+    listarAperturasAbiertas,
     listarComprobantes,
     listarRecepcionesFacturables,
 } from "../services/procesosService";
@@ -15,6 +16,7 @@ const inputClase =
 const Facturacion = () => {
     const [comprobantes, setComprobantes] = useState([]);
     const [recepciones, setRecepciones] = useState([]);
+    const [aperturas, setAperturas] = useState([]);
     const [cargando, setCargando] = useState(true);
     const [guardando, setGuardando] = useState(false);
     const [error, setError] = useState("");
@@ -37,12 +39,14 @@ const Facturacion = () => {
         setCargando(true);
         setError("");
         try {
-            const [c, r] = await Promise.all([
+            const [c, r, a] = await Promise.all([
                 listarComprobantes(),
                 listarRecepcionesFacturables(),
+                listarAperturasAbiertas(),
             ]);
             setComprobantes(c);
             setRecepciones(r);
+            setAperturas(a);
         } catch (e) {
             setError(e.message);
         } finally {
@@ -130,6 +134,12 @@ const Facturacion = () => {
             <form onSubmit={emitir} className="mb-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
                 <h3 className="mb-4 font-semibold text-slate-900">Emitir comprobante</h3>
 
+                {aperturas.length === 0 && (
+                    <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                        Debes abrir una caja desde Finanzas y caja antes de emitir nuevos comprobantes.
+                    </p>
+                )}
+
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                     <label className="block text-xs font-semibold text-slate-700 xl:col-span-2">
                         Recepción *
@@ -181,7 +191,7 @@ const Facturacion = () => {
                 <div className="mt-5">
                     <button
                         type="submit"
-                        disabled={guardando}
+                        disabled={guardando || aperturas.length === 0}
                         className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                     >
                         {guardando ? "Emitiendo..." : "Emitir comprobante"}
