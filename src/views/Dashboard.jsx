@@ -11,6 +11,7 @@ import Reservas from "./Reservas";
 import Pagos from "./Pagos";
 import Facturacion from "./Facturacion";
 import Reportes from "./Reportes";
+import Consumos from "./Consumos";
 
 const MENU_CATEGORIAS = [
     {
@@ -20,6 +21,7 @@ const MENU_CATEGORIAS = [
         opciones: [
             { clave: "checkinout", nombre: "Check-in / Check-out", icono: "bi-door-open" },
             { clave: "reservas", nombre: "Reservas", icono: "bi-calendar-check" },
+            { clave: "consumos", nombre: "Registro de consumo", icono: "bi-bag-plus" },
             { clave: "reservas_lista", nombre: "Historial de reservas", icono: "bi-list-ul" },
             { clave: "huespedes", nombre: "Huéspedes", icono: "bi-people" },
         ],
@@ -542,6 +544,8 @@ const Dashboard = () => {
                     {vista === "checkinout" && <CheckInOut />}
 
                     {vista === "reservas" && <Reservas onVerReservas={() => abrirVista("reservas_lista")} />}
+
+                    {vista === "consumos" && <Consumos />}
 
                     {vista === "pagos" && <Pagos />}
 

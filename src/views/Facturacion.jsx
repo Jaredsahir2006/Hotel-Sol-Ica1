@@ -124,6 +124,10 @@ const Facturacion = () => {
                 </div>
             </div>
 
+            <p className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                La numeración y el registro de boletas/facturas de este módulo son internos; no se envían ni validan ante SUNAT.
+            </p>
+
             {error && (
                 <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
                     <i className="bi bi-exclamation-triangle mr-2"></i>
@@ -147,7 +151,7 @@ const Facturacion = () => {
                             <option value="">-- Seleccione --</option>
                             {recepciones.map((r) => (
                                 <option key={r.id_recepcion} value={r.id_recepcion}>
-                                    #{r.id_recepcion} · {r.cliente_nombre} · {soles(r.d_inicial)}
+                                    #{r.id_recepcion} · {r.cliente_nombre} · {soles(Number(r.d_inicial || 0) + Number(r.d_asistente || 0))}
                                 </option>
                             ))}
                         </select>
@@ -182,8 +186,10 @@ const Facturacion = () => {
                             <p className="font-semibold text-blue-900">Hab. {recepcionSeleccionada.habitacion_numero}</p>
                         </div>
                         <div>
-                            <p className="text-xs text-blue-500">Total</p>
-                            <p className="font-semibold text-blue-900">{soles(recepcionSeleccionada.d_inicial)}</p>
+                            <p className="text-xs text-blue-500">Total de la cuenta</p>
+                            <p className="font-semibold text-blue-900">
+                                {soles(Number(recepcionSeleccionada.d_inicial || 0) + Number(recepcionSeleccionada.d_asistente || 0))}
+                            </p>
                         </div>
                     </div>
                 )}

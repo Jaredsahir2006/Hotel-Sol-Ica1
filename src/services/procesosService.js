@@ -1,5 +1,6 @@
 import { supabase } from "../config/supabase";
 import { calcularTotalesEfectivo, calcularTotalesPorMetodo, TURNOS_CAJA } from "../utils/caja";
+import { calcularSaldoPendiente } from "../utils/comprobantePago";
 import { buscarHabitacionesDisponibles } from "../utils/disponibilidad";
 
 // ============================================================
@@ -197,6 +198,133 @@ export const listarRecepciones = async () => {
 export const listarRecepcionesActivas = async () => {
     const recepciones = await listarRecepciones();
     return recepciones.filter((r) => !r.f_salidac);
+};
+
+export const listarRecepcionesPendientesPago = async () => {
+    const recepciones = await listarRecepciones();
+    return recepciones
+        .map((recepcion) => ({
+            ...recepcion,
+            saldo_pendiente: calcularSaldoPendiente(recepcion),
+        }))
+        .filter((recepcion) => recepcion.saldo_pendiente > 0);
+};
+
+export const listarRecepcionesHospedadas = async () => {
+    const recepciones = await listarRecepcionesActivas();
+    return recepciones.filter((r) =>
+        String(r.habitacion_estado || "").toUpperCase().includes("OCUP")
+        && String(r.f_entrada || "").slice(0, 10) <= hoyLocal()
+    );
+};
+
+export const listarProductosConsumo = async () => {
+    const [productos, categorias] = await Promise.all([
+        leerTodos(() => supabase.from("producto").select("*").eq("estado", "1").order("n_producto")),
+        leer(supabase.from("categoria_producto").select("*").eq("estado", "1")),
+    ]);
+    return productos.map((producto) => ({
+        ...producto,
+        categoria_nombre: categorias.find(
+            (categoria) => String(categoria.id_categoriaproducto) === String(producto.id_categoriaproducto)
+        )?.n_categoriaproducto || "",
+        precio: Number(producto.precio) || 0,
+    }));
+};
+
+export const listarConsumosRecepcion = async (id_recepcion) => {
+    const recepcionId = Number(id_recepcion);
+    if (!Number.isInteger(recepcionId) || recepcionId <= 0) {
+        throw new Error("Selecciona una recepción válida para consultar sus consumos.");
+    }
+
+    const ventas = await leerTodos(() => supabase.from("venta").select("*").eq("estado", "1")
+        .eq("id_recepcion", recepcionId).order("id_venta", { ascending: false }));
+    if (!ventas.length) return [];
+
+    const [detalles, productos] = await Promise.all([
+        leerTodos(() => supabase.from("detalle_venta").select("*").eq("estado", "1")
+            .in("id_venta", ventas.map((venta) => venta.id_venta))),
+        listarProductosConsumo(),
+    ]);
+    const ventasPorId = new Map(ventas.map((venta) => [String(venta.id_venta), venta]));
+    const productosPorId = new Map(productos.map((producto) => [String(producto.id_producto), producto]));
+
+    return detalles
+        .filter((detalle) => ventasPorId.has(String(detalle.id_venta)))
+        .map((detalle) => ({
+            ...detalle,
+            venta: ventasPorId.get(String(detalle.id_venta)),
+            producto_nombre: productosPorId.get(String(detalle.id_producto))?.n_producto
+                || `Producto #${detalle.id_producto}`,
+        }));
+};
+
+export const registrarConsumo = async ({ id_recepcion, items }) => {
+    const recepcionId = Number(id_recepcion);
+    if (!Number.isInteger(recepcionId) || recepcionId <= 0) {
+        throw new Error("Selecciona una recepción válida para registrar el consumo.");
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+        throw new Error("Agrega al menos un servicio o producto antes de registrar el consumo.");
+    }
+
+    const [recepcion, productos] = await Promise.all([
+        leer(supabase.from("recepcion").select("*").eq("id_recepcion", recepcionId)
+            .eq("estado", "1").single()),
+        listarProductosConsumo(),
+    ]);
+    if (!recepcion) throw new Error("La recepción seleccionada no existe o está inactiva.");
+    if (recepcion.f_salidac) throw new Error("No se pueden registrar consumos después del check-out.");
+    if (String(recepcion.f_entrada || "").slice(0, 10) > hoyLocal()) {
+        throw new Error("No se pueden registrar consumos antes de la fecha de entrada.");
+    }
+    const habitacion = (await listarHabitaciones()).find(
+        (item) => String(item.id_habitacion) === String(recepcion.id_habitacion)
+    );
+    if (!String(habitacion?.estado_nombre || "").toUpperCase().includes("OCUP")) {
+        throw new Error("Solo se pueden registrar consumos para huéspedes que ya hicieron check-in.");
+    }
+
+    const productosPorId = new Map(productos.map((producto) => [String(producto.id_producto), producto]));
+    const detalles = items.map((item) => {
+        const producto = productosPorId.get(String(item.id_producto));
+        const cantidad = Number(item.cantidad);
+        if (!producto) throw new Error("Uno de los productos no existe o está inactivo. Actualiza el listado.");
+        if (!Number.isInteger(cantidad) || cantidad <= 0) {
+            throw new Error(`Ingresa una cantidad entera mayor a cero para ${producto.n_producto}.`);
+        }
+        const precio = Number(producto.precio);
+        if (!Number.isFinite(precio) || precio < 0) {
+            throw new Error(`El producto ${producto.n_producto} no tiene un precio válido.`);
+        }
+        return {
+            id_producto: Number(producto.id_producto),
+            cantidad,
+            sub_total: Math.round(precio * cantidad * 100) / 100,
+        };
+    });
+    const total = Math.round(detalles.reduce((suma, detalle) => suma + detalle.sub_total, 0) * 100) / 100;
+    if (total <= 0) throw new Error("El total del consumo debe ser mayor a cero.");
+
+    const venta = await insertarFila("venta", { id_recepcion: recepcionId, total });
+    const { error: errorDetalles } = await supabase.from("detalle_venta").insert(
+        detalles.map((detalle) => auditar({ ...detalle, id_venta: venta.id_venta }))
+    );
+    lanzar(errorDetalles);
+
+    const nuevoAdicional = Math.round(((Number(recepcion.d_asistente) || 0) + total) * 100) / 100;
+    const pagado = Number(recepcion.t_pagado) || 0;
+    const totalDeuda = Math.max(
+        0,
+        Math.round(((Number(recepcion.d_inicial) || 0) + nuevoAdicional - pagado) * 100) / 100
+    );
+    const actualizada = await actualizarFila("recepcion", "id_recepcion", recepcionId, {
+        d_asistente: nuevoAdicional,
+        totaldeuda: totalDeuda,
+    });
+
+    return { venta, detalles, total, recepcion: actualizada };
 };
 
 export const buscarDisponibilidadHabitaciones = async ({ f_entrada, f_salida }) => {
@@ -441,6 +569,59 @@ export const registrarCheckIn = async ({
     }
 
     return recepcion;
+};
+
+export const registrarIngresoReserva = async (id_recepcion) => {
+    const recepcionId = Number(id_recepcion);
+    if (!Number.isInteger(recepcionId) || recepcionId <= 0) {
+        throw new Error("Selecciona una reserva válida para registrar el check-in.");
+    }
+
+    const { data: recepcion, error } = await supabase
+        .from("recepcion")
+        .select("*")
+        .eq("id_recepcion", recepcionId)
+        .single();
+    lanzar(error);
+    if (!recepcion) throw new Error("La reserva no existe.");
+    if (recepcion.f_salidac) throw new Error("La reserva ya tiene registrado el check-out.");
+    if (String(recepcion.f_entrada || "").slice(0, 10) > hoyLocal()) {
+        throw new Error("No se puede registrar el check-in antes de la fecha de entrada.");
+    }
+
+    const [habitaciones, recepciones, estados] = await Promise.all([
+        listarHabitaciones(),
+        listarRecepciones(),
+        leer(supabase.from("estado_habitacion").select("*").eq("estado", "1")),
+    ]);
+    const habitacion = habitaciones.find(
+        (item) => String(item.id_habitacion) === String(recepcion.id_habitacion)
+    );
+    if (!habitacion) throw new Error("No se encontró la habitación de esta reserva.");
+    if (String(habitacion.estado_nombre || "").toUpperCase().includes("OCUP")) {
+        throw new Error("La habitación ya está ocupada; verifica si la reserva ya tiene check-in.");
+    }
+    if (!String(habitacion.estado_nombre || "").toUpperCase().includes("DISPON")) {
+        throw new Error("La habitación no está disponible para registrar el check-in.");
+    }
+
+    const conflicto = recepciones.find((otra) =>
+        String(otra.id_recepcion) !== String(recepcionId)
+        && String(otra.id_habitacion) === String(recepcion.id_habitacion)
+        && !otra.f_salidac
+        && String(otra.f_entrada || "").slice(0, 10) < String(recepcion.f_salida || "").slice(0, 10)
+        && String(otra.f_salida || "").slice(0, 10) > String(recepcion.f_entrada || "").slice(0, 10)
+    );
+    if (conflicto) throw new Error("Existe otra reserva activa para esta habitación y estas fechas.");
+
+    const estadoOcupada = estados.find((item) =>
+        String(item.descripcion || "").toUpperCase().includes("OCUP")
+    );
+    if (!estadoOcupada) throw new Error("No hay un estado de habitación «Ocupada» configurado.");
+
+    return actualizarFila("habitacion", "id_habitacion", recepcion.id_habitacion, {
+        id_estadohabitacion: estadoOcupada.id_estadohabitacion,
+    });
 };
 
 export const registrarCheckOut = async (id_recepcion) => {
@@ -728,17 +909,29 @@ export const registrarPago = async ({
     if (!Number.isFinite(valorIngresado) || valorIngresado <= 0) throw new Error("El monto del pago debe ser un importe válido mayor a cero.");
     const valor = Math.round(valorIngresado * 100) / 100;
     if (valor <= 0) throw new Error("El monto del pago debe ser mayor a un céntimo.");
+    const aperturaId = Number(id_aperturacaja);
+    const conceptoId = Number(id_concepto);
+    const tipoId = Number(id_tipomovimiento);
+    const metodoId = Number(id_metodopago);
+    if (![aperturaId, conceptoId, tipoId, metodoId].every((id) => Number.isInteger(id) && id > 0)) {
+        throw new Error("Selecciona una caja, concepto, tipo de movimiento y método de pago válidos.");
+    }
+    const recepcionId = id_recepcion ? Number(id_recepcion) : null;
+    if (recepcionId !== null && (!Number.isInteger(recepcionId) || recepcionId <= 0)) {
+        throw new Error("La recepción seleccionada no es válida.");
+    }
 
     const [concepto, tipo, apertura] = await Promise.all([
-        leer(supabase.from("concepto_caja").select("*").eq("id_concepto", id_concepto).single()),
-        leer(supabase.from("tipo_movimiento_caja").select("*").eq("id_tipomovimiento", id_tipomovimiento).single()),
-        leer(supabase.from("apertura_caja").select("*").eq("id_aperturacaja", id_aperturacaja).single()),
+        leer(supabase.from("concepto_caja").select("*").eq("id_concepto", conceptoId).single()),
+        leer(supabase.from("tipo_movimiento_caja").select("*").eq("id_tipomovimiento", tipoId).single()),
+        leer(supabase.from("apertura_caja").select("*").eq("id_aperturacaja", aperturaId).single()),
     ]);
 
     if (!apertura || String(apertura.situacion).toUpperCase() !== "A")
         throw new Error("La caja seleccionada no está abierta.");
+    if (!concepto) throw new Error("El concepto de caja no existe.");
     if (!tipo) throw new Error("El tipo de movimiento no existe.");
-    if (String(concepto.id_tipomovimiento) !== String(id_tipomovimiento)) {
+    if (String(concepto.id_tipomovimiento) !== String(tipoId)) {
         throw new Error("El tipo de movimiento no corresponde al concepto seleccionado.");
     }
     if (!["+", "-"].includes(tipo.signo)) {
@@ -748,18 +941,32 @@ export const registrarPago = async ({
     if (!["S", "N"].includes(afectaEfectivo)) {
         throw new Error("El concepto no indica si el movimiento afecta al efectivo.");
     }
+    let recepcion;
+    if (recepcionId) {
+        recepcion = await leer(supabase.from("recepcion").select("*")
+            .eq("id_recepcion", recepcionId).eq("estado", "1").single());
+        if (!recepcion) throw new Error("La recepción seleccionada no existe o está inactiva.");
+        if (tipo.signo !== "+") {
+            throw new Error("Un egreso no se puede registrar como pago de una recepción.");
+        }
+        const saldoPendiente = calcularSaldoPendiente(recepcion);
+        if (saldoPendiente <= 0) throw new Error("La recepción seleccionada no tiene saldo pendiente.");
+        if (valor > saldoPendiente) {
+            throw new Error(`El pago supera el saldo pendiente de S/ ${saldoPendiente.toFixed(2)}.`);
+        }
+    }
     const usuarioId = usuarioActualId();
     if (!Number.isInteger(Number(usuarioId)) || Number(usuarioId) <= 0) {
         throw new Error("No se pudo identificar al usuario que registra el movimiento.");
     }
 
     const movimiento = await insertarFila("movimiento_caja", {
-        id_aperturacaja: Number(id_aperturacaja),
-        id_tipomovimiento: Number(id_tipomovimiento),
-        id_concepto: Number(id_concepto),
-        id_metodopago: Number(id_metodopago),
+        id_aperturacaja: aperturaId,
+        id_tipomovimiento: tipoId,
+        id_concepto: conceptoId,
+        id_metodopago: metodoId,
         id_usuario: usuarioId,
-        id_recepcion: id_recepcion ? Number(id_recepcion) : null,
+        id_recepcion: recepcionId,
         id_venta: null,
         numero_operacion: numero_operacion || `OP${Date.now()}`,
         documento: documento || null,
@@ -784,23 +991,25 @@ export const registrarPago = async ({
         });
     }
 
-    if (id_recepcion) {
-        const { data: recepcion } = await supabase
-            .from("recepcion")
-            .select("*")
-            .eq("id_recepcion", id_recepcion)
-            .single();
-
-        if (recepcion) {
-            const pagado = (Number(recepcion.t_pagado) || 0) + valor;
-            await actualizarFila("recepcion", "id_recepcion", id_recepcion, {
-                t_pagado: pagado,
-                totaldeuda: Math.max(0, (Number(recepcion.d_inicial) || 0) - pagado),
-            });
-        }
+    let saldoPendienteDespues = null;
+    let totalPagado = null;
+    if (recepcion) {
+        const pagado = Math.round(((Number(recepcion.t_pagado) || 0) + valor) * 100) / 100;
+        const saldoPendiente = Math.round((calcularSaldoPendiente(recepcion) - valor) * 100) / 100;
+        await actualizarFila("recepcion", "id_recepcion", recepcionId, {
+            t_pagado: pagado,
+            totaldeuda: Math.max(0, saldoPendiente),
+        });
+        saldoPendienteDespues = Math.max(0, saldoPendiente);
+        totalPagado = pagado;
     }
 
-    return movimiento;
+    return {
+        ...movimiento,
+        saldo_anterior: recepcion ? calcularSaldoPendiente(recepcion) : null,
+        saldo_pendiente: saldoPendienteDespues,
+        total_pagado: totalPagado,
+    };
 };
 
 export const listarPagos = async () => {
@@ -816,7 +1025,7 @@ export const listarPagos = async () => {
         leer(supabase.from("tipo_movimiento_caja").select("*").eq("estado", "1")),
         leer(supabase.from("metodo_pago").select("*").eq("estado", "1")),
         leer(supabase.from("usuario").select("*").eq("estado", "1")),
-        leer(supabase.from("recepcion").select("*").eq("estado", "1")),
+        listarRecepciones(),
     ]);
 
     return movimientos.map((m) => ({
@@ -827,8 +1036,17 @@ export const listarPagos = async () => {
         metodo_nombre: metodos.find((x) => x.id_metodopago === m.id_metodopago)?.n_metodopago || "-",
         usuario_nombre: usuarios.find((u) => u.id_usuario === m.id_usuario)?.logeo || "-",
         recepcion_numero: m.id_recepcion
-            ? recepciones.find((r) => r.id_recepcion === m.id_recepcion)?.id_recepcion
+            ? recepciones.find((r) => String(r.id_recepcion) === String(m.id_recepcion))?.id_recepcion
             : null,
+        cliente_nombre: m.id_recepcion
+            ? recepciones.find((r) => String(r.id_recepcion) === String(m.id_recepcion))?.cliente_nombre || "-"
+            : "-",
+        cliente_documento: m.id_recepcion
+            ? recepciones.find((r) => String(r.id_recepcion) === String(m.id_recepcion))?.cliente_documento || "-"
+            : "-",
+        habitacion_numero: m.id_recepcion
+            ? recepciones.find((r) => String(r.id_recepcion) === String(m.id_recepcion))?.habitacion_numero || "-"
+            : "-",
     }));
 };
 
@@ -888,7 +1106,7 @@ export const listarComprobantes = async () => {
                 recepcion,
                 cliente_nombre: cliente?.nombre || "-",
                 cliente_documento: cliente?.documento || recepcion?.documento || "-",
-                total: recepcion?.d_inicial || 0,
+                total: Math.round(((Number(recepcion?.d_inicial) || 0) + (Number(recepcion?.d_asistente) || 0)) * 100) / 100,
             };
         });
 

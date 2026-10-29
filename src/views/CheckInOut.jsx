@@ -1,14 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 
 import {
     listarCatalogosPago,
     listarClientes,
     listarHabitaciones,
+    listarConsumosRecepcion,
     listarRecepciones,
     registrarCheckIn,
+    registrarIngresoReserva,
     registrarCheckOut,
 } from "../services/procesosService";
 import { fecha, hoy, noches, soles, sumarDias } from "../utils/format";
+import { construirPreCuenta } from "../utils/preCuenta";
 import Paginacion from "../components/Paginacion";
 import { usePaginacion } from "../hooks/usePaginacion";
 
@@ -26,6 +31,10 @@ const CheckInOut = () => {
     const [toast, setToast] = useState(null);
     const [busqueda, setBusqueda] = useState("");
     const [formAbierto, setFormAbierto] = useState(false);
+    const [recepcionCheckout, setRecepcionCheckout] = useState(null);
+    const [consumosCheckout, setConsumosCheckout] = useState([]);
+    const [cargandoConsumos, setCargandoConsumos] = useState(false);
+    const consultaConsumosActual = useRef(0);
 
     const usuario = useMemo(() => {
         try {
@@ -165,18 +174,72 @@ const CheckInOut = () => {
 
     const hacerCheckOut = async (recepcion) => {
         const deuda = Number(recepcion.totaldeuda) || 0;
+        const total = (Number(recepcion.d_inicial) || 0) + (Number(recepcion.d_asistente) || 0);
         const mensaje = deuda > 0
-            ? `La recepción tiene una deuda pendiente de ${soles(deuda)}. ¿Registrar el check-out de la habitación ${recepcion.habitacion_numero} igualmente?`
-            : `¿Registrar el check-out de la habitación ${recepcion.habitacion_numero}?`;
+            ? `La pre-cuenta de la habitación ${recepcion.habitacion_numero} suma ${soles(total)} y tiene un saldo pendiente de ${soles(deuda)}. ¿Registrar el check-out igualmente?`
+            : `La cuenta de la habitación ${recepcion.habitacion_numero} está saldada. ¿Registrar el check-out?`;
         if (!window.confirm(mensaje)) return;
 
         setGuardando(true);
         try {
             await registrarCheckOut(recepcion.id_recepcion);
             await cargar();
+            consultaConsumosActual.current += 1;
+            setRecepcionCheckout(null);
+            setConsumosCheckout([]);
             avisar("Check-out registrado. La habitación quedó disponible.");
         } catch (errorCheckOut) {
             avisar(errorCheckOut.message, false);
+        } finally {
+            setGuardando(false);
+        }
+    };
+
+    const prepararCheckOut = async (recepcion) => {
+        const solicitud = ++consultaConsumosActual.current;
+        setRecepcionCheckout(recepcion);
+        setConsumosCheckout([]);
+        setCargandoConsumos(true);
+        setError("");
+        try {
+            const detalles = await listarConsumosRecepcion(recepcion.id_recepcion);
+            if (solicitud === consultaConsumosActual.current) setConsumosCheckout(detalles);
+        } catch (errorConsumos) {
+            if (solicitud === consultaConsumosActual.current) {
+                setError(`No se pudieron cargar los consumos de la recepción #${recepcion.id_recepcion}: ${errorConsumos.message}`);
+            }
+        } finally {
+            if (solicitud === consultaConsumosActual.current) setCargandoConsumos(false);
+        }
+    };
+
+    const cancelarPreparacionCheckOut = () => {
+        consultaConsumosActual.current += 1;
+        setRecepcionCheckout(null);
+        setConsumosCheckout([]);
+        setCargandoConsumos(false);
+    };
+
+    const descargarPreCuenta = () => {
+        if (!recepcionCheckout || cargandoConsumos) return;
+        const documento = new jsPDF();
+        const nombreArchivo = construirPreCuenta(
+            documento,
+            autoTable,
+            recepcionCheckout,
+            consumosCheckout
+        );
+        documento.save(nombreArchivo);
+    };
+
+    const hacerCheckIn = async (recepcion) => {
+        setGuardando(true);
+        try {
+            await registrarIngresoReserva(recepcion.id_recepcion);
+            await cargar();
+            avisar(`Check-in registrado para la habitación ${recepcion.habitacion_numero}.`);
+        } catch (errorCheckIn) {
+            avisar(errorCheckIn.message, false);
         } finally {
             setGuardando(false);
         }
@@ -192,6 +255,14 @@ const CheckInOut = () => {
     const ordenadas = [...activas, ...finalizadas];
     const paginacion = usePaginacion(ordenadas.length);
     const recepcionesPagina = ordenadas.slice(paginacion.desde, paginacion.hasta);
+    const totalPreCuenta = recepcionCheckout
+        ? (Number(recepcionCheckout.d_inicial) || 0) + (Number(recepcionCheckout.d_asistente) || 0)
+        : 0;
+    const saldoPreCuenta = !recepcionCheckout
+        ? 0
+        : recepcionCheckout.totaldeuda == null
+            ? Math.max(0, totalPreCuenta - (Number(recepcionCheckout.t_pagado) || 0))
+            : Math.max(0, Number(recepcionCheckout.totaldeuda) || 0);
 
     const esReservaPendiente = (r) =>
         !r.f_salidac
@@ -223,7 +294,7 @@ const CheckInOut = () => {
                     <div>
                         <h2 className="text-xl font-bold text-slate-900">Check-in / Check-out</h2>
                         <p className="text-sm text-gray-500">
-                            Registra el ingreso y la salida de huéspedes actualizando la habitación.
+                            Confirma el ingreso de reservas existentes o registra un ingreso sin reserva.
                         </p>
                     </div>
                 </div>
@@ -233,7 +304,7 @@ const CheckInOut = () => {
                     className="rounded-xl bg-blue-800 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-900"
                 >
                     <i className="bi bi-box-arrow-in-right mr-2"></i>
-                    {formAbierto ? "Cerrar formulario" : "Nuevo check-in"}
+                    {formAbierto ? "Cerrar formulario" : "Nuevo ingreso sin reserva"}
                 </button>
             </div>
 
@@ -249,7 +320,7 @@ const CheckInOut = () => {
                     onSubmit={guardarCheckIn}
                     className="mb-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm"
                 >
-                    <h3 className="mb-4 font-semibold text-slate-900">Nuevo check-in</h3>
+                    <h3 className="mb-4 font-semibold text-slate-900">Nuevo ingreso sin reserva</h3>
 
                     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                         <label className="block text-xs font-semibold text-slate-700">
@@ -339,7 +410,7 @@ const CheckInOut = () => {
                             disabled={guardando}
                             className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                         >
-                            {guardando ? "Guardando..." : "Registrar check-in"}
+                            {guardando ? "Guardando..." : "Registrar ingreso"}
                         </button>
                         <button
                             type="button"
@@ -360,10 +431,129 @@ const CheckInOut = () => {
                         setBusqueda(e.target.value);
                         paginacion.setPagina(1);
                     }}
-                    placeholder="Buscar por cliente, documento o habitación..."
+                    placeholder="Buscar reserva por huésped, DNI/RUC, habitación o número..."
                     className={inputClase}
                 />
             </div>
+
+            {recepcionCheckout && (
+                <section className="mb-6 rounded-2xl border border-blue-200 bg-white p-5 shadow-sm" aria-label="Detalle de check-out">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                        <div>
+                            <h3 className="text-lg font-semibold text-slate-900">
+                                Preparar check-out · Recepción #{recepcionCheckout.id_recepcion}
+                            </h3>
+                            <p className="text-sm text-slate-600">
+                                {recepcionCheckout.cliente_nombre} · Habitación {recepcionCheckout.habitacion_numero}
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={cancelarPreparacionCheckOut}
+                            className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200"
+                        >
+                            Cerrar detalle
+                        </button>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <div className="rounded-xl bg-slate-50 p-3 text-sm">
+                            <p className="text-xs text-slate-500">Documento</p>
+                            <p className="mt-1 font-semibold">{recepcionCheckout.cliente_documento || "—"}</p>
+                        </div>
+                        <div className="rounded-xl bg-slate-50 p-3 text-sm">
+                            <p className="text-xs text-slate-500">Fecha de entrada</p>
+                            <p className="mt-1 font-semibold">{fecha(recepcionCheckout.f_entrada)}</p>
+                        </div>
+                        <div className="rounded-xl bg-slate-50 p-3 text-sm">
+                            <p className="text-xs text-slate-500">Salida prevista · Noches</p>
+                            <p className="mt-1 font-semibold">
+                                {fecha(recepcionCheckout.f_salida)} · {noches(recepcionCheckout.f_entrada, recepcionCheckout.f_salida)}
+                            </p>
+                        </div>
+                        <div className="rounded-xl bg-slate-50 p-3 text-sm">
+                            <p className="text-xs text-slate-500">Total registrado de alojamiento</p>
+                            <p className="mt-1 font-semibold">{soles(recepcionCheckout.d_inicial)}</p>
+                        </div>
+                    </div>
+
+                    <div className="mt-5">
+                        <h4 className="mb-2 font-semibold text-slate-800">Consumos adicionales</h4>
+                        {cargandoConsumos ? (
+                            <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">Cargando detalle de consumos...</p>
+                        ) : (
+                            <div className="overflow-x-auto rounded-xl border border-gray-200">
+                                <table className="w-full text-left text-sm">
+                                    <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                                        <tr>
+                                            <th className="px-4 py-3">Servicio</th>
+                                            <th className="px-4 py-3">Cantidad</th>
+                                            <th className="px-4 py-3">Precio unitario</th>
+                                            <th className="px-4 py-3">Subtotal</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                        {consumosCheckout.length ? consumosCheckout.map((detalle) => (
+                                            <tr key={detalle.id_detalle}>
+                                                <td className="px-4 py-3">{detalle.producto_nombre}</td>
+                                                <td className="px-4 py-3">{detalle.cantidad}</td>
+                                                <td className="px-4 py-3">
+                                                    {soles(Number(detalle.sub_total) / (Number(detalle.cantidad) || 1))}
+                                                </td>
+                                                <td className="px-4 py-3 font-semibold">{soles(detalle.sub_total)}</td>
+                                            </tr>
+                                        )) : (
+                                            <tr>
+                                                <td colSpan={4} className="px-4 py-5 text-center text-slate-500">
+                                                    No hay consumos con detalle asociados a esta recepción.
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                        {(Number(recepcionCheckout.d_asistente) || 0) > 0 && (
+                            <p className="mt-2 text-xs text-slate-500">
+                                Total de consumos registrado en la cuenta: {soles(recepcionCheckout.d_asistente)}.
+                                La pre-cuenta concilia el detalle con ese total registrado.
+                            </p>
+                        )}
+                    </div>
+
+                    <div className="mt-5 flex flex-wrap items-center justify-between gap-4 border-t pt-4">
+                        <div className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-3">
+                            <p>Total de estadía: <strong>{soles(totalPreCuenta)}</strong></p>
+                            <p>Pagos registrados: <strong>{soles(recepcionCheckout.t_pagado)}</strong></p>
+                            <p className={saldoPreCuenta > 0 ? "text-red-700" : "text-emerald-700"}>
+                                Saldo pendiente: <strong>{soles(saldoPreCuenta)}</strong>
+                            </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            <button
+                                type="button"
+                                onClick={descargarPreCuenta}
+                                disabled={cargandoConsumos}
+                                className="rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                <i className="bi bi-file-earmark-pdf mr-2"></i>Generar pre-cuenta
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => hacerCheckOut(recepcionCheckout)}
+                                disabled={guardando || cargandoConsumos}
+                                className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                <i className="bi bi-box-arrow-right mr-2"></i>Registrar check-out
+                            </button>
+                        </div>
+                    </div>
+                    <p className="mt-3 text-xs text-slate-500">
+                        La pre-cuenta es informativa y no reemplaza una factura, boleta ni el registro del pago. Si queda saldo pendiente,
+                        se solicitará confirmación antes de liberar la habitación.
+                    </p>
+                </section>
+            )}
 
             <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
                 <div className="overflow-x-auto">
@@ -409,15 +599,31 @@ const CheckInOut = () => {
                                         <td className="px-5 py-3">
                                             {!r.f_salidac ? (
                                                 esReservaPendiente(r) ? (
-                                                    <span className="text-xs text-amber-700">A la espera del check-in</span>
+                                                    String(r.f_entrada || "").slice(0, 10) > hoy() ? (
+                                                        <span className="text-xs text-amber-700">
+                                                            Ingreso desde {fecha(r.f_entrada)}
+                                                        </span>
+                                                    ) : (
+                                                        <button
+                                                            onClick={() => hacerCheckIn(r)}
+                                                            disabled={
+                                                                guardando
+                                                                || !String(r.habitacion_estado || "").toUpperCase().includes("DISPON")
+                                                            }
+                                                            className="rounded-lg bg-emerald-100 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-50"
+                                                        >
+                                                            <i className="bi bi-box-arrow-in-right mr-1"></i>
+                                                            Registrar check-in
+                                                        </button>
+                                                    )
                                                 ) : (
                                                     <button
-                                                        onClick={() => hacerCheckOut(r)}
-                                                        disabled={guardando}
+                                                        onClick={() => prepararCheckOut(r)}
+                                                        disabled={guardando || cargandoConsumos}
                                                         className="rounded-lg bg-blue-100 px-3 py-1.5 text-xs font-semibold text-blue-800 hover:bg-blue-200 disabled:opacity-60"
                                                     >
-                                                        <i className="bi bi-box-arrow-right mr-1"></i>
-                                                        Check-out
+                                                        <i className="bi bi-receipt mr-1"></i>
+                                                        Preparar check-out
                                                     </button>
                                                 )
                                             ) : (

@@ -8,13 +8,14 @@ import {
     listarAperturasAbiertas,
     listarCatalogosPago,
     listarPagos,
-    listarRecepcionesActivas,
+    listarRecepcionesPendientesPago,
     obtenerArqueoCaja,
     obtenerUltimaAperturaCaja,
     registrarPago,
 } from "../services/procesosService";
 import { fechaHora, soles } from "../utils/format";
 import { TURNOS_CAJA } from "../utils/caja";
+import { construirComprobantePago } from "../utils/comprobantePago";
 import Paginacion from "../components/Paginacion";
 import { usePaginacion } from "../hooks/usePaginacion";
 
@@ -47,6 +48,7 @@ const Pagos = () => {
     const [fondoSiguiente, setFondoSiguiente] = useState("");
     const [observacionCierre, setObservacionCierre] = useState("");
     const [reporteCierre, setReporteCierre] = useState(null);
+    const [comprobantePago, setComprobantePago] = useState(null);
 
     const usuario = useMemo(() => {
         try {
@@ -86,7 +88,7 @@ const Pagos = () => {
             const [cat, ap, rec, pag] = await Promise.all([
                 listarCatalogosPago(),
                 listarAperturasAbiertas(),
-                listarRecepcionesActivas(),
+                listarRecepcionesPendientesPago(),
                 listarPagos(),
             ]);
             setCatalogos(cat);
@@ -134,9 +136,9 @@ const Pagos = () => {
             const siguiente = { ...prev, [name]: value };
             if (name === "id_recepcion") {
                 const recepcion = recepciones.find((r) => String(r.id_recepcion) === String(value));
-                if (recepcion && !siguiente.monto) {
-                    siguiente.monto = String(Number(recepcion.totaldeuda || 0).toFixed(2));
-                }
+                siguiente.monto = recepcion
+                    ? String(Number(recepcion.saldo_pendiente ?? recepcion.totaldeuda ?? 0).toFixed(2))
+                    : "";
             }
             return siguiente;
         });
@@ -154,17 +156,53 @@ const Pagos = () => {
             avisar("El concepto de caja no es válido.", false);
             return;
         }
-        if (Number(form.monto) <= 0) {
+        const importe = Number(form.monto);
+        if (!Number.isFinite(importe) || importe <= 0) {
             avisar("Ingresa un monto mayor a cero.", false);
             return;
+        }
+        const tipoSeleccionado = catalogos.tipos.find(
+            (tipo) => String(tipo.id_tipomovimiento) === String(conceptoSeleccionado.id_tipomovimiento)
+        );
+        if (recepcionSeleccionada) {
+            if (tipoSeleccionado?.signo !== "+") {
+                avisar("Para cobrar una recepción, selecciona un concepto de ingreso.", false);
+                return;
+            }
+            const saldoPendiente = Number(recepcionSeleccionada.saldo_pendiente ?? recepcionSeleccionada.totaldeuda);
+            if (!Number.isFinite(saldoPendiente) || saldoPendiente <= 0) {
+                avisar("La recepción seleccionada no tiene saldo pendiente.", false);
+                return;
+            }
+            if (importe > saldoPendiente) {
+                avisar(`El pago no puede superar el saldo pendiente de ${soles(saldoPendiente)}.`, false);
+                return;
+            }
         }
 
         setGuardando(true);
         try {
-            await registrarPago({
+            const pago = await registrarPago({
                 ...form,
                 id_tipomovimiento: conceptoSeleccionado.id_tipomovimiento,
-                monto: Number(form.monto),
+                monto: importe,
+            });
+            if (!pago?.id_movimientocaja) {
+                throw new Error("No se recibió el identificador del movimiento para emitir la constancia.");
+            }
+            const metodo = catalogos.metodos.find(
+                (item) => String(item.id_metodopago) === String(form.id_metodopago)
+            );
+            setComprobantePago({
+                ...pago,
+                id_recepcion: form.id_recepcion ? Number(form.id_recepcion) : null,
+                cliente_nombre: recepcionSeleccionada?.cliente_nombre || "-",
+                cliente_documento: recepcionSeleccionada?.cliente_documento || "-",
+                habitacion_numero: recepcionSeleccionada?.habitacion_numero || "-",
+                usuario_nombre: nombreCajero,
+                concepto_nombre: conceptoSeleccionado.n_concepto,
+                metodo_nombre: metodo?.n_metodopago || "-",
+                monto: importe,
             });
             setForm((prev) => ({
                 ...prev,
@@ -181,6 +219,12 @@ const Pagos = () => {
         } finally {
             setGuardando(false);
         }
+    };
+
+    const descargarComprobantePago = (pago) => {
+        const documento = new jsPDF();
+        const nombreArchivo = construirComprobantePago(documento, autoTable, pago);
+        documento.save(nombreArchivo);
     };
 
     const abrir = async (e) => {
@@ -524,6 +568,37 @@ const Pagos = () => {
                 </section>
             )}
 
+            {comprobantePago && (
+                <section className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                    <div className="text-sm text-emerald-900">
+                        <h3 className="font-semibold">Comprobante de pago generado · CP-{comprobantePago.id_movimientocaja}</h3>
+                        <div className="mt-3 grid gap-x-8 gap-y-1 sm:grid-cols-2">
+                            <p>Recibido de: <strong>{comprobantePago.cliente_nombre}</strong></p>
+                            <p>Importe recibido: <strong>{soles(comprobantePago.monto)}</strong></p>
+                            <p>Método: <strong>{comprobantePago.metodo_nombre}</strong></p>
+                            <p>Operación: <strong>{comprobantePago.numero_operacion || "-"}</strong></p>
+                            {comprobantePago.id_recepcion && (
+                                <p>Recepción: <strong>#{comprobantePago.id_recepcion}</strong></p>
+                            )}
+                            {comprobantePago.saldo_pendiente != null && (
+                                <p>Saldo restante: <strong>{soles(comprobantePago.saldo_pendiente)}</strong></p>
+                            )}
+                        </div>
+                        <p className="mt-2 text-xs">
+                            Constancia interna; no reemplaza una boleta o factura.
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => descargarComprobantePago(comprobantePago)}
+                        className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800"
+                    >
+                        <i className="bi bi-file-earmark-pdf mr-2"></i>
+                        Descargar constancia
+                    </button>
+                </section>
+            )}
+
             <div className="mb-6 grid gap-4 lg:grid-cols-3">
                 <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm lg:col-span-2">
                     <h3 className="mb-4 font-semibold text-slate-900">Registrar pago</h3>
@@ -547,12 +622,12 @@ const Pagos = () => {
                             </label>
 
                             <label className="block text-xs font-semibold text-slate-700">
-                                Recepción (opcional)
+                                Recepción con saldo (opcional)
                                 <select name="id_recepcion" value={form.id_recepcion} onChange={cambiar} className={`${inputClase} mt-1.5 font-normal`}>
                                     <option value="">-- Pago sin recepción --</option>
                                     {recepciones.map((r) => (
                                         <option key={r.id_recepcion} value={r.id_recepcion}>
-                                            #{r.id_recepcion} · {r.cliente_nombre} · deuda {soles(r.totaldeuda)}
+                                            #{r.id_recepcion} · {r.cliente_nombre} · saldo {soles(r.saldo_pendiente ?? r.totaldeuda)}
                                         </option>
                                     ))}
                                 </select>
@@ -588,7 +663,7 @@ const Pagos = () => {
                                 <input type="number" min="0" step="0.01" name="monto" value={form.monto} onChange={cambiar} className={`${inputClase} mt-1.5 font-normal`} />
                                 {recepcionSeleccionada && (
                                     <span className="mt-1 block text-[11px] font-normal text-gray-400">
-                                        Deuda actual: {soles(recepcionSeleccionada.totaldeuda)}
+                                        Saldo actual: {soles(recepcionSeleccionada.saldo_pendiente ?? recepcionSeleccionada.totaldeuda)}
                                     </span>
                                 )}
                             </label>
@@ -809,16 +884,17 @@ const Pagos = () => {
                                 <th className="px-5 py-3 font-semibold">Método</th>
                                 <th className="px-5 py-3 font-semibold">Operación</th>
                                 <th className="px-5 py-3 font-semibold">Monto</th>
+                                <th className="px-5 py-3 font-semibold">Constancia</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                             {cargando ? (
                                 <tr>
-                                    <td colSpan={7} className="px-5 py-10 text-center text-gray-400">Cargando...</td>
+                                    <td colSpan={8} className="px-5 py-10 text-center text-gray-400">Cargando...</td>
                                 </tr>
                             ) : pagos.length === 0 ? (
                                 <tr>
-                                    <td colSpan={7} className="px-5 py-10 text-center text-gray-400">Sin movimientos</td>
+                                    <td colSpan={8} className="px-5 py-10 text-center text-gray-400">Sin movimientos</td>
                                 </tr>
                             ) : (
                                 pagosPagina.map((p) => (
@@ -835,6 +911,20 @@ const Pagos = () => {
                                         <td className="px-5 py-3 text-slate-700">{p.numero_operacion || "-"}</td>
                                         <td className={`px-5 py-3 font-semibold ${p.tipo_signo === "-" ? "text-red-600" : "text-emerald-700"}`}>
                                             {p.tipo_signo === "-" ? "-" : "+"}{soles(p.monto)}
+                                        </td>
+                                        <td className="px-5 py-3">
+                                            {p.tipo_signo === "+" ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => descargarComprobantePago(p)}
+                                                    className="whitespace-nowrap rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                                                    aria-label={`Descargar constancia del pago ${p.id_movimientocaja}`}
+                                                >
+                                                    Descargar PDF
+                                                </button>
+                                            ) : (
+                                                <span className="text-slate-400">—</span>
+                                            )}
                                         </td>
                                     </tr>
                                 ))

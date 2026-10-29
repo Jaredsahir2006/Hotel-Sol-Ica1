@@ -1,9 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import CheckInOut from "./CheckInOut";
 import Facturacion from "./Facturacion";
 import Pagos from "./Pagos";
 import Reservas from "./Reservas";
+import Consumos from "./Consumos";
 import { hoy, sumarDias } from "../utils/format";
 import {
     abrirCaja,
@@ -16,12 +17,20 @@ import {
     listarHabitaciones,
     listarPagos,
     listarRecepciones,
-    listarRecepcionesActivas,
+    listarRecepcionesPendientesPago,
     listarRecepcionesFacturables,
     obtenerArqueoCaja,
     obtenerUltimaAperturaCaja,
     cerrarCaja,
     registrarReserva,
+    registrarCheckIn,
+    registrarIngresoReserva,
+    listarRecepcionesHospedadas,
+    listarProductosConsumo,
+    listarConsumosRecepcion,
+    registrarConsumo,
+    registrarCheckOut,
+    registrarPago,
 } from "../services/procesosService";
 
 jest.mock("../services/procesosService", () => ({
@@ -36,11 +45,16 @@ jest.mock("../services/procesosService", () => ({
     listarHabitaciones: jest.fn(),
     listarPagos: jest.fn(),
     listarRecepciones: jest.fn(),
-    listarRecepcionesActivas: jest.fn(),
+    listarRecepcionesPendientesPago: jest.fn(),
     listarRecepcionesFacturables: jest.fn(),
     obtenerArqueoCaja: jest.fn(),
     obtenerUltimaAperturaCaja: jest.fn(),
     registrarCheckIn: jest.fn(),
+    registrarIngresoReserva: jest.fn(),
+    listarRecepcionesHospedadas: jest.fn(),
+    listarProductosConsumo: jest.fn(),
+    listarConsumosRecepcion: jest.fn(),
+    registrarConsumo: jest.fn(),
     registrarCheckOut: jest.fn(),
     registrarPago: jest.fn(),
     registrarReserva: jest.fn(),
@@ -102,7 +116,7 @@ beforeEach(() => {
     listarComprobantes.mockResolvedValue(crearComprobantes(30));
     listarRecepcionesFacturables.mockResolvedValue([]);
     listarAperturasAbiertas.mockResolvedValue([]);
-    listarRecepcionesActivas.mockResolvedValue([]);
+    listarRecepcionesPendientesPago.mockResolvedValue([]);
     listarPagos.mockResolvedValue(crearPagos(30));
     buscarDisponibilidadHabitaciones.mockResolvedValue([]);
     listarCatalogosReserva.mockResolvedValue({
@@ -111,6 +125,104 @@ beforeEach(() => {
         distritos: [{ id_distrito: 5, d_distrito: "Ica" }],
         metodos: [{ id_metodopago: 2, n_metodopago: "Efectivo" }],
     });
+    registrarIngresoReserva.mockResolvedValue({});
+    listarRecepcionesHospedadas.mockResolvedValue([]);
+    listarProductosConsumo.mockResolvedValue([]);
+    listarConsumosRecepcion.mockResolvedValue([]);
+    registrarConsumo.mockResolvedValue({ total: 0 });
+});
+
+test("registra consumos para un huésped alojado y los asocia a su recepción", async () => {
+    listarConsumosRecepcion.mockClear();
+    listarRecepcionesHospedadas.mockResolvedValue([{
+        id_recepcion: 42,
+        cliente_nombre: "Juan Carlos Pérez López",
+        cliente_documento: "12345678",
+        habitacion_numero: "102",
+        totaldeuda: 100,
+    }]);
+    listarProductosConsumo.mockResolvedValue([{
+        id_producto: 9,
+        n_producto: "Desayuno Buffet",
+        precio: 25,
+    }]);
+    registrarConsumo.mockResolvedValue({ total: 50 });
+    render(<Consumos />);
+
+    await screen.findByRole("option", { name: /Juan Carlos Pérez López/ });
+    await act(async () => userEvent.selectOptions(screen.getByLabelText("Huésped alojado"), "42"));
+    expect(await screen.findByText("Aún no hay consumos registrados.")).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Servicio o producto"), "9");
+    await userEvent.clear(screen.getByLabelText("Cantidad"));
+    await userEvent.type(screen.getByLabelText("Cantidad"), "2");
+    await userEvent.click(screen.getByRole("button", { name: "Agregar" }));
+    expect(screen.getByText("Total nuevo: S/ 50.00")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Registrar consumo" }));
+    await waitFor(() => expect(registrarConsumo).toHaveBeenCalledWith({
+        id_recepcion: 42,
+        items: [{ id_producto: 9, cantidad: 2 }],
+    }));
+    expect(await screen.findByText(/Consumo registrado por S\/ 50.00/)).toBeInTheDocument();
+    await waitFor(() => expect(listarConsumosRecepcion).toHaveBeenCalledTimes(2));
+});
+
+test("registra el check-in sobre una reserva existente sin crear otra recepción", async () => {
+    listarRecepciones.mockResolvedValue([{
+        ...crearRecepciones(1)[0],
+        f_entrada: hoy(),
+        habitacion_estado: "Disponible",
+    }]);
+    render(<CheckInOut />);
+
+    await screen.findByText("Huesped 1");
+    await userEvent.click(screen.getByRole("button", { name: "Registrar check-in" }));
+
+    await waitFor(() => expect(registrarIngresoReserva).toHaveBeenCalledWith(1));
+    expect(await screen.findByText(/Check-in registrado para la habitación 1/)).toBeInTheDocument();
+    expect(registrarCheckIn).not.toHaveBeenCalled();
+});
+
+test("prepara la pre-cuenta con consumos y confirma el check-out", async () => {
+    const recepcion = {
+        ...crearRecepciones(1)[0],
+        id_recepcion: 42,
+        cliente_nombre: "Juan Carlos Pérez López",
+        cliente_documento: "12345678",
+        habitacion_numero: "102",
+        f_entrada: hoy(),
+        f_salida: sumarDias(hoy(), 1),
+        d_inicial: 100,
+        d_asistente: 50,
+        t_pagado: 25,
+        totaldeuda: 125,
+        habitacion_estado: "Ocupada",
+    };
+    listarRecepciones.mockResolvedValue([recepcion]);
+    listarConsumosRecepcion.mockResolvedValue([{
+        id_detalle: 1,
+        id_producto: 9,
+        producto_nombre: "Desayuno Buffet",
+        cantidad: 2,
+        sub_total: 50,
+    }]);
+    registrarCheckOut.mockResolvedValue({});
+    const confirmar = jest.spyOn(window, "confirm").mockReturnValue(true);
+    render(<CheckInOut />);
+
+    await screen.findByText("Juan Carlos Pérez López");
+    await userEvent.click(screen.getByRole("button", { name: "Preparar check-out" }));
+    expect(await screen.findByText("Preparar check-out · Recepción #42")).toBeInTheDocument();
+    expect(await screen.findByText("Desayuno Buffet")).toBeInTheDocument();
+    expect(screen.getByText("Saldo pendiente:").parentElement).toHaveTextContent("S/ 125.00");
+
+    expect(screen.getByRole("button", { name: "Generar pre-cuenta" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Registrar check-out" }));
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("S/ 125.00"));
+    await waitFor(() => expect(registrarCheckOut).toHaveBeenCalledWith(42));
+    expect(await screen.findByText("Check-out registrado. La habitación quedó disponible.")).toBeInTheDocument();
+    confirmar.mockRestore();
 });
 
 test("Check-in/Check-out pagina las recepciones", async () => {
@@ -275,6 +387,86 @@ test("Pagos y caja pagina todos los movimientos recibidos", async () => {
     expect(screen.queryByText("Pago 1")).not.toBeInTheDocument();
     expect(screen.getByText(/Mostrando 26–30 de 30 registros/)).toBeInTheDocument();
     await waitFor(() => expect(listarPagos).toHaveBeenCalledTimes(1));
+});
+
+test("registra un cobro de recepción y ofrece descargar su constancia interna", async () => {
+    listarAperturasAbiertas.mockResolvedValue([{
+        id_aperturacaja: 8,
+        numero_turno: "T0008",
+        caja_nombre: "Recepción",
+    }]);
+    listarCatalogosPago.mockResolvedValue({
+        cajas: [],
+        usuarios: [],
+        metodos: [{ id_metodopago: 2, n_metodopago: "Efectivo" }],
+        conceptos: [{ id_concepto: 5, n_concepto: "Pago de hospedaje", id_tipomovimiento: 3 }],
+        tipos: [{ id_tipomovimiento: 3, n_tipomovimiento: "Ingreso", signo: "+" }],
+    });
+    listarRecepcionesPendientesPago.mockResolvedValue([{
+        id_recepcion: 42,
+        cliente_nombre: "Ana Huamán",
+        cliente_documento: "12345678",
+        habitacion_numero: "102",
+        saldo_pendiente: 75,
+        totaldeuda: 75,
+    }]);
+    registrarPago.mockResolvedValue({
+        id_movimientocaja: 19,
+        f_movimiento: "2026-10-28T15:00:00",
+        numero_operacion: "OP-19",
+        saldo_anterior: 75,
+        saldo_pendiente: 45,
+        total_pagado: 30,
+    });
+    render(<Pagos />);
+
+    await userEvent.selectOptions(await screen.findByLabelText("Recepción con saldo (opcional)"), "42");
+    await userEvent.selectOptions(screen.getByLabelText("Concepto *"), "5");
+    await userEvent.selectOptions(screen.getByLabelText("Método de pago *"), "2");
+    await userEvent.clear(screen.getByLabelText(/Monto \(S\/\)/));
+    await userEvent.type(screen.getByLabelText(/Monto \(S\/\)/), "30");
+    await userEvent.click(screen.getByRole("button", { name: "Registrar pago" }));
+
+    await waitFor(() => expect(registrarPago).toHaveBeenCalledWith(expect.objectContaining({
+        id_aperturacaja: "8",
+        id_recepcion: "42",
+        id_concepto: "5",
+        id_metodopago: "2",
+        id_tipomovimiento: 3,
+        monto: 30,
+    })));
+    expect(await screen.findByText("Comprobante de pago generado · CP-19")).toBeInTheDocument();
+    expect(screen.getByText("Saldo restante:").parentElement).toHaveTextContent("S/ 45.00");
+    expect(screen.getByRole("button", { name: "Descargar constancia" })).toBeInTheDocument();
+    expect(screen.getByText(/no reemplaza una boleta o factura/i)).toBeInTheDocument();
+});
+
+test("impide cobrar a una recepción un importe superior a su saldo", async () => {
+    listarAperturasAbiertas.mockResolvedValue([{ id_aperturacaja: 8, numero_turno: "T0008" }]);
+    listarCatalogosPago.mockResolvedValue({
+        cajas: [],
+        usuarios: [],
+        metodos: [{ id_metodopago: 2, n_metodopago: "Efectivo" }],
+        conceptos: [{ id_concepto: 5, n_concepto: "Pago de hospedaje", id_tipomovimiento: 3 }],
+        tipos: [{ id_tipomovimiento: 3, n_tipomovimiento: "Ingreso", signo: "+" }],
+    });
+    listarRecepcionesPendientesPago.mockResolvedValue([{
+        id_recepcion: 42,
+        cliente_nombre: "Ana Huamán",
+        saldo_pendiente: 75,
+        totaldeuda: 75,
+    }]);
+    render(<Pagos />);
+
+    await userEvent.selectOptions(await screen.findByLabelText("Recepción con saldo (opcional)"), "42");
+    await userEvent.selectOptions(screen.getByLabelText("Concepto *"), "5");
+    await userEvent.selectOptions(screen.getByLabelText("Método de pago *"), "2");
+    await userEvent.clear(screen.getByLabelText(/Monto \(S\/\)/));
+    await userEvent.type(screen.getByLabelText(/Monto \(S\/\)/), "80");
+    await userEvent.click(screen.getByRole("button", { name: "Registrar pago" }));
+
+    expect(await screen.findByText(/no puede superar el saldo pendiente de S\/ 75\.00/i)).toBeInTheDocument();
+    expect(registrarPago).not.toHaveBeenCalled();
 });
 
 test("la apertura propone el fondo del cierre anterior y registra notas", async () => {

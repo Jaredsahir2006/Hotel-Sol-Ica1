@@ -462,9 +462,12 @@ const filaRecepcion = (recepcion, catalogo) => {
     const cliente = clienteDeRecepcion(recepcion, catalogo);
     const habitacion = habitacionDeRecepcion(recepcion, catalogo);
     const noches = nochesEntre(recepcion.f_entrada, recepcion.f_salida);
-    const total = numero(recepcion.d_inicial);
+    const total = numero(recepcion.d_inicial) + numero(recepcion.d_asistente);
     const pagado = numero(recepcion.t_pagado);
-    const saldo = Math.max(0, numero(recepcion.totaldeuda) || total - pagado);
+    const saldo = Math.max(
+        0,
+        recepcion.totaldeuda == null ? total - pagado : numero(recepcion.totaldeuda)
+    );
     const estado = estadoReserva(recepcion);
     return {
         id: recepcion.id_recepcion,
@@ -479,6 +482,7 @@ const filaRecepcion = (recepcion, catalogo) => {
         categoriaId: habitacion?.categoriaId || null,
         categoria: habitacion?.categoriaNombre || "Sin categoría",
         entrada: fechaDia(recepcion.f_entrada),
+        fecha: fechaDia(recepcion.f_entrada),
         salida: fechaDia(recepcion.f_salida),
         noches,
         total,
@@ -650,18 +654,6 @@ const agruparPor = (filas, obtenerClave) => {
 const suma = (filas, obtenerValor) =>
     filas.reduce((total, fila) => total + numero(obtenerValor(fila)), 0);
 
-const seriePorPeriodos = (periodos, filas, fechaDe, valorDe) => {
-    const indices = new Map(periodos.map((periodo, indice) => [periodo, indice]));
-    const valores = periodos.map(() => 0);
-    filas.forEach((fila) => {
-        const clave = clavePeriodo(fechaDe(fila), "periodo");
-        const indice = indices.get(clave);
-        if (indice == null) return;
-        valores[indice] += numero(valorDe ? valorDe(fila) : 1);
-    });
-    return valores;
-};
-
 const seriePeriodos = (periodos, filas, fechaDe, valorDe, periodo) => {
     const indices = new Map(periodos.map((clave, indice) => [clave, indice]));
     const valores = periodos.map(() => 0);
@@ -725,10 +717,6 @@ const reporteResumen = async (filtros, catalogo) => {
 
     const ventasTotal = suma(ventas, (venta) => venta.total);
     const hospedaje = suma(recepciones, (recepcion) => recepcion.d_inicial);
-    const nochesVendidas = suma(recepciones, (recepcion) =>
-        nochesEntre(recepcion.f_entrada, recepcion.f_salida)
-    );
-
     const habitaciones = catalogo.habitaciones.filter(
         (habitacion) =>
             !filtros.categoriaHabitacion ||
@@ -1441,7 +1429,7 @@ const reporteComprobantes = async (filtros, catalogo) => {
             documento: cliente?.documento || recepcion?.documento || "-",
             empresaId: cliente?.empresaId || null,
             empresa: cliente?.empresaNombre || "-",
-            total: numero(recepcion?.d_inicial),
+            total: numero(recepcion?.d_inicial) + numero(recepcion?.d_asistente),
             responsableId: recepcion?.id_usuario || null,
             responsable:
                 catalogo.usuarios.find(
@@ -1522,12 +1510,384 @@ const reporteComprobantes = async (filtros, catalogo) => {
     };
 };
 
+// ------------------------------------------------------------
+// REPORTE: AUDITORÍA Y TRAZABILIDAD
+// ------------------------------------------------------------
+const reporteAuditoria = async (filtros, catalogo) => {
+    const usuariosPorId = new Map(catalogo.usuarios.map((usuario) => [String(usuario.id), usuario]));
+    const eventosBase = await cargarAuditoria(filtros);
+    const eventos = eventosBase.filter((evento) =>
+        (!filtros.usuario || String(evento.id_usuario) === String(filtros.usuario))
+        && (!filtros.accion || String(evento.accion || "").toUpperCase() === filtros.accion)
+        && (!filtros.tablaAuditada || String(evento.n_tabla || "").toUpperCase() === filtros.tablaAuditada)
+    );
+    const filas = eventos.map((evento) => ({
+        id: evento.id_auditoria,
+        fecha: fechaDia(evento.f_evento),
+        fechaHora: evento.f_evento,
+        usuario: usuariosPorId.get(String(evento.id_usuario))?.nombre || `Usuario #${evento.id_usuario || "-"}`,
+        tabla: evento.n_tabla || "-",
+        accion: evento.accion || "-",
+        registro: evento.id_registro || "-",
+        terminal: evento.terminal || "-",
+        ip: evento.ip || "-",
+    }));
+    const porAccion = agruparPor(filas, (fila) => fila.accion);
+    const acciones = [...porAccion.entries()]
+        .map(([accion, grupo]) => ({ accion, cantidad: grupo.length }))
+        .sort((a, b) => b.cantidad - a.cantidad);
+    const porTabla = agruparPor(filas, (fila) => fila.tabla);
+    const tablas = [...porTabla.entries()]
+        .map(([tablaNombre, grupo]) => ({ tabla: tablaNombre, cantidad: grupo.length }))
+        .sort((a, b) => b.cantidad - a.cantidad)
+        .slice(0, 10);
+
+    return {
+        kpis: [
+            kpi("eventos", "Eventos registrados", filas.length, "numero", "Eventos en el período y filtros seleccionados", "bi-clock-history", "slate"),
+            kpi("usuarios", "Usuarios activos", new Set(filas.map((fila) => fila.usuario)).size, "numero", "Usuarios con eventos en el resultado", "bi-people", "blue"),
+            kpi("tablas", "Tablas afectadas", porTabla.size, "numero", "Tablas distintas en el resultado", "bi-table", "indigo"),
+        ],
+        graficos: [
+            grafico("auditoria-acciones", "Eventos por acción", "donut", acciones.map((fila) => fila.accion), [
+                { nombre: "Eventos", valores: acciones.map((fila) => fila.cantidad) },
+            ]),
+            grafico("auditoria-tablas", "Eventos por tabla", "barras-horizontales", tablas.map((fila) => fila.tabla), [
+                { nombre: "Eventos", valores: tablas.map((fila) => fila.cantidad) },
+            ]),
+        ],
+        tablas: [
+            tabla("auditoria-detalle", "Detalle de auditoría", [
+                { clave: "fechaHora", nombre: "Fecha y hora", tipo: "fecha-hora" },
+                { clave: "usuario", nombre: "Usuario", tipo: "texto" },
+                { clave: "tabla", nombre: "Tabla", tipo: "texto" },
+                { clave: "accion", nombre: "Acción", tipo: "texto" },
+                { clave: "registro", nombre: "ID registro", tipo: "texto" },
+                { clave: "terminal", nombre: "Terminal", tipo: "texto" },
+                { clave: "ip", nombre: "IP", tipo: "texto" },
+            ], filas),
+        ],
+    };
+};
+
+// ------------------------------------------------------------
+// REPORTE: VENTAS POR PRODUCTO Y CATEGORÍA
+// ------------------------------------------------------------
+const reporteVentas = async (filtros, catalogo) => {
+    const [ventasBase, detallesBase, recepciones] = await Promise.all([
+        cargarVentas(filtros),
+        cargarDetallesVenta(),
+        cargarRecepciones(),
+    ]);
+    const recepcionesPorId = new Map(recepciones.map((recepcion) => [
+        String(recepcion.id_recepcion),
+        recepcion,
+    ]));
+    const ventasPorId = new Map(ventasBase
+        .filter((venta) => {
+            const recepcion = recepcionesPorId.get(String(venta.id_recepcion));
+            const cliente = recepcion ? clienteDeRecepcion(recepcion, catalogo) : null;
+            return (!filtros.cliente || String(recepcion?.id_cliente) === String(filtros.cliente))
+                && (!filtros.empresa || String(cliente?.empresaId || "") === String(filtros.empresa))
+                && (!filtros.usuario || String(recepcion?.id_usuario) === String(filtros.usuario));
+        })
+        .map((venta) => [String(venta.id_venta), venta]));
+    const productosPorId = new Map(catalogo.productos.map((producto) => [
+        String(producto.id),
+        producto,
+    ]));
+    const detalles = detallesBase
+        .filter((detalle) => ventasPorId.has(String(detalle.id_venta)))
+        .map((detalle) => {
+            const venta = ventasPorId.get(String(detalle.id_venta));
+            const producto = productosPorId.get(String(detalle.id_producto));
+            const recepcion = recepcionesPorId.get(String(venta?.id_recepcion));
+            const cliente = recepcion ? clienteDeRecepcion(recepcion, catalogo) : null;
+            const responsable = catalogo.usuarios.find(
+                (usuario) => String(usuario.id) === String(recepcion?.id_usuario)
+            )?.nombre || "-";
+            return {
+                id: detalle.id_detalle,
+                fecha: fechaDia(venta?.feccre),
+                fechaHora: venta?.feccre,
+                producto: producto?.nombre || `Producto #${detalle.id_producto}`,
+                productoBase: producto?.nombreBase || nombreBase(producto?.nombre),
+                categoria: producto?.categoriaNombre || "Sin categoría",
+                categoriaId: producto?.categoriaId || null,
+                cliente: cliente?.nombre || "-",
+                clienteId: recepcion?.id_cliente || null,
+                empresa: cliente?.empresaNombre || "-",
+                empresaId: cliente?.empresaId || null,
+                habitacion: habitacionDeRecepcion(recepcion || {}, catalogo)?.numero || "-",
+                responsable,
+                responsableId: recepcion?.id_usuario || null,
+                cantidad: numero(detalle.cantidad),
+                importe: numero(detalle.sub_total),
+            };
+        })
+        .filter((fila) =>
+            (!filtros.categoriaProducto || String(fila.categoriaId) === String(filtros.categoriaProducto))
+            && (!filtros.producto || normalizarTexto(fila.producto).includes(normalizarTexto(filtros.producto)))
+        )
+        .sort((a, b) => String(b.fechaHora || "").localeCompare(String(a.fechaHora || "")));
+
+    const productosAgrupados = agruparPor(detalles, (fila) => fila.productoBase || fila.producto);
+    const rankingProductos = [...productosAgrupados.entries()]
+        .map(([nombre, grupo]) => ({
+            producto: nombre,
+            unidades: suma(grupo, (fila) => fila.cantidad),
+            importe: redondear(suma(grupo, (fila) => fila.importe)),
+        }))
+        .sort((a, b) => b.importe - a.importe);
+    const categoriasAgrupadas = agruparPor(detalles, (fila) => fila.categoria);
+    const rankingCategorias = [...categoriasAgrupadas.entries()]
+        .map(([categoria, grupo]) => ({
+            categoria,
+            unidades: suma(grupo, (fila) => fila.cantidad),
+            importe: redondear(suma(grupo, (fila) => fila.importe)),
+        }))
+        .sort((a, b) => b.importe - a.importe);
+
+    const { claves, etiquetas } = datosPeriodos(filtros);
+    const importesPeriodo = seriePeriodos(claves, detalles, (fila) => fila.fechaHora,
+        (fila) => fila.importe, filtros.periodo);
+    return {
+        kpis: [
+            kpi("importe", "Importe vendido", redondear(suma(detalles, (fila) => fila.importe)), "moneda", `${detalles.length} detalle(s) de venta`, "bi-cash-coin", "emerald"),
+            kpi("unidades", "Unidades vendidas", suma(detalles, (fila) => fila.cantidad), "numero", "Unidades registradas en detalle_venta", "bi-bag-check", "blue"),
+            kpi("productos", "Productos distintos", productosAgrupados.size, "numero", "Productos con ventas en el resultado", "bi-box-seam", "violet"),
+            kpi("categorias", "Categorías con ventas", categoriasAgrupadas.size, "numero", "Categorías con movimiento", "bi-tags", "amber"),
+        ],
+        graficos: [
+            grafico("ventas-periodo", "Importe vendido por período", "barras", etiquetas, [
+                { nombre: "Importe", valores: importesPeriodo },
+            ], "moneda"),
+            grafico("ventas-categoria", "Ventas por categoría", "donut",
+                rankingCategorias.slice(0, 8).map((fila) => fila.categoria), [
+                    { nombre: "Importe", valores: rankingCategorias.slice(0, 8).map((fila) => fila.importe) },
+                ], "moneda"),
+            grafico("ventas-top", "Productos más vendidos", "barras-horizontales",
+                rankingProductos.slice(0, 10).map((fila) => fila.producto), [
+                    { nombre: "Unidades", valores: rankingProductos.slice(0, 10).map((fila) => fila.unidades) },
+                ]),
+        ],
+        tablas: [
+            tabla("ventas-productos", "Resumen por producto", [
+                { clave: "producto", nombre: "Producto", tipo: "texto" },
+                { clave: "unidades", nombre: "Unidades", tipo: "numero" },
+                { clave: "importe", nombre: "Importe", tipo: "moneda" },
+            ], rankingProductos),
+            tabla("ventas-detalle", "Detalle de ventas", [
+                { clave: "fecha", nombre: "Fecha", tipo: "fecha" },
+                { clave: "producto", nombre: "Producto", tipo: "texto" },
+                { clave: "categoria", nombre: "Categoría", tipo: "texto" },
+                { clave: "cliente", nombre: "Cliente", tipo: "texto" },
+                { clave: "empresa", nombre: "Empresa", tipo: "texto" },
+                { clave: "habitacion", nombre: "Habitación", tipo: "texto" },
+                { clave: "cantidad", nombre: "Cantidad", tipo: "numero" },
+                { clave: "importe", nombre: "Importe", tipo: "moneda" },
+                { clave: "responsable", nombre: "Responsable", tipo: "texto" },
+            ], detalles),
+        ],
+    };
+};
+
+// ------------------------------------------------------------
+// REPORTE: RANKING DE CLIENTES Y EMPRESAS
+// ------------------------------------------------------------
+const reporteClientes = async (filtros, catalogo) => {
+    const [recepcionesTodas, ventas] = await Promise.all([
+        cargarRecepciones(),
+        cargarVentas(filtros),
+    ]);
+    const recepciones = filtrarRecepciones(recepcionesTodas, filtros, catalogo);
+    const idsRecepcion = new Set(recepciones.map((recepcion) => String(recepcion.id_recepcion)));
+    const consumoPorRecepcion = new Map();
+    ventas.forEach((venta) => {
+        if (!idsRecepcion.has(String(venta.id_recepcion))) return;
+        consumoPorRecepcion.set(
+            String(venta.id_recepcion),
+            (consumoPorRecepcion.get(String(venta.id_recepcion)) || 0) + numero(venta.total)
+        );
+    });
+
+    const filasReserva = recepciones.map((recepcion) => {
+        const fila = filaRecepcion(recepcion, catalogo);
+        const consumo = consumoPorRecepcion.get(String(recepcion.id_recepcion)) || 0;
+        return {
+            cliente: fila.cliente,
+            clienteId: fila.clienteId,
+            empresa: fila.empresa,
+            empresaId: fila.empresaId,
+            responsable: fila.responsable,
+            responsableId: fila.responsableId,
+            hospedaje: fila.total,
+            consumo,
+            total: fila.total + consumo,
+            noches: fila.noches,
+            reservas: 1,
+        };
+    });
+    const agrupador = filtros.agrupacionClientes === "empresa"
+        ? (fila) => fila.empresa === "-" ? fila.cliente : fila.empresa
+        : (fila) => fila.cliente;
+    const nombreGrupo = filtros.agrupacionClientes === "empresa" ? "empresa" : "cliente";
+    const grupos = agruparPor(filasReserva, agrupador);
+    const filas = [...grupos.entries()]
+        .map(([nombre, grupo]) => ({
+            [nombreGrupo]: nombre,
+            reservas: grupo.length,
+            noches: suma(grupo, (fila) => fila.noches),
+            hospedaje: redondear(suma(grupo, (fila) => fila.hospedaje)),
+            consumo: redondear(suma(grupo, (fila) => fila.consumo)),
+            total: redondear(suma(grupo, (fila) => fila.total)),
+            promedio: grupo.length ? redondear(suma(grupo, (fila) => fila.total) / grupo.length) : 0,
+        }))
+        .sort((a, b) => b.total - a.total);
+    const total = suma(filas, (fila) => fila.total);
+
+    return {
+        kpis: [
+            kpi("clientes", "Clientes", filas.length, "numero", "Registros en el ranking", "bi-people", "blue"),
+            kpi("ingresos", "Hospedaje y consumos", redondear(total), "moneda", "Importes de recepciones y ventas relacionadas", "bi-cash-stack", "emerald"),
+            kpi("reservas", "Reservas", filasReserva.length, "numero", "Recepciones del período", "bi-calendar-check", "indigo"),
+            kpi("noches", "Noches", suma(filas, (fila) => fila.noches), "numero", "Noches registradas en las estadías", "bi-moon-stars", "amber"),
+        ],
+        graficos: [
+            grafico("clientes-ranking", `Top ${nombreGrupo === "empresa" ? "empresas" : "clientes"} por ingreso`,
+                "barras-horizontales", filas.slice(0, 10).map((fila) => fila[nombreGrupo]), [
+                    { nombre: "Total", valores: filas.slice(0, 10).map((fila) => fila.total) },
+                ], "moneda"),
+            grafico("clientes-composicion", "Hospedaje y consumos por cliente",
+                "barras", filas.slice(0, 8).map((fila) => fila[nombreGrupo]), [
+                    { nombre: "Hospedaje", valores: filas.slice(0, 8).map((fila) => fila.hospedaje) },
+                    { nombre: "Consumos", valores: filas.slice(0, 8).map((fila) => fila.consumo) },
+                ], "moneda"),
+        ],
+        tablas: [
+            tabla("clientes-ranking", `Ranking de ${nombreGrupo === "empresa" ? "empresas" : "clientes"}`, [
+                { clave: nombreGrupo, nombre: nombreGrupo === "empresa" ? "Empresa" : "Cliente", tipo: "texto" },
+                { clave: "reservas", nombre: "Reservas", tipo: "numero" },
+                { clave: "noches", nombre: "Noches", tipo: "numero" },
+                { clave: "hospedaje", nombre: "Hospedaje", tipo: "moneda" },
+                { clave: "consumo", nombre: "Consumos", tipo: "moneda" },
+                { clave: "total", nombre: "Total", tipo: "moneda" },
+                { clave: "promedio", nombre: "Promedio por reserva", tipo: "moneda" },
+            ], filas),
+        ],
+    };
+};
+
+// ------------------------------------------------------------
+// REPORTE: TENDENCIAS Y ESTACIONALIDAD
+// ------------------------------------------------------------
+const reporteTendencias = async (filtros, catalogo) => {
+    const [resumen, ocupacion] = await Promise.all([
+        reporteResumen(filtros, catalogo),
+        reporteOcupacion(filtros, catalogo),
+    ]);
+    return {
+        kpis: [...resumen.kpis, ...ocupacion.kpis.filter((item) => ["ocupacion", "adr"].includes(item.id))],
+        graficos: [...resumen.graficos, ...ocupacion.graficos],
+        tablas: [...resumen.tablas, ...ocupacion.tablas],
+    };
+};
+
+// ------------------------------------------------------------
+// REPORTE: CONSTRUCTOR PERSONALIZADO
+// ------------------------------------------------------------
+const reportePersonalizado = async (filtros, catalogo) => {
+    const dataset = DATASETS_PERSONALIZADOS[filtros.dataset];
+    if (!dataset) throw new Error("Selecciona un conjunto de datos válido para el reporte personalizado.");
+    const generadores = {
+        reservas: reporteReservas,
+        ventas: reporteVentas,
+        caja: reporteCaja,
+        comprobantes: reporteComprobantes,
+        auditoria: reporteAuditoria,
+    };
+    const base = await generadores[filtros.dataset](filtros, catalogo);
+    const tablaBase = base.tablas[base.tablas.length - 1];
+    const filasBase = tablaBase?.filas || [];
+    const metrica = dataset.metricas.find((item) => item.clave === filtros.metrica)
+        || dataset.metricas[0];
+    const dimension = dataset.dimensiones.find((item) => item.clave === filtros.agruparPor)
+        || dataset.dimensiones[0];
+    const fechaPorDataset = {
+        reservas: "entrada",
+        ventas: "fecha",
+        caja: "fecha",
+        comprobantes: "emision",
+        auditoria: "fechaHora",
+    };
+    const claveValor = dimension.clave;
+    const leerDimension = (fila) => {
+        if (claveValor === "periodo") {
+            const valorFecha = fila[fechaPorDataset[filtros.dataset]];
+            return etiquetaPeriodo(clavePeriodo(valorFecha, filtros.periodo), filtros.periodo) || "Sin fecha";
+        }
+        const valor = fila[claveValor];
+        return valor == null || valor === "" ? "Sin dato" : String(valor);
+    };
+    const leerMetrica = (fila) => {
+        if (metrica.clave === "__conteo") return 1;
+        const valor = Number(fila[metrica.clave]);
+        return Number.isFinite(valor) ? valor : 0;
+    };
+    const grupos = agruparPor(filasBase, leerDimension);
+    const valores = [...grupos.entries()].map(([nombre, filas]) => {
+        const datos = filas.map(leerMetrica);
+        const valor = metrica.clave === "__conteo"
+            ? filas.length
+            : agregarValores(datos, filtros.agregacion);
+        return { grupo: nombre, valor: redondear(valor), registros: filas.length };
+    }).sort((a, b) => b.valor - a.valor);
+    const filasDetalle = filtros.columnas.length
+        ? filasBase.map((fila) => Object.fromEntries(
+            dataset.columnas
+                .filter((columna) => filtros.columnas.includes(columna.clave))
+                .map((columna) => [columna.clave, fila[columna.clave] ?? "-"])
+        ))
+        : filasBase;
+    const columnasDetalle = filtros.columnas.length
+        ? dataset.columnas.filter((columna) => filtros.columnas.includes(columna.clave))
+        : tablaBase?.columnas || [];
+
+    return {
+        kpis: [
+            kpi("registros", "Registros", filasBase.length, "numero", dataset.nombre, "bi-table", "blue"),
+            kpi("grupos", "Grupos", valores.length, "numero", dimension.nombre, "bi-diagram-3", "violet"),
+            kpi("resultado", metrica.nombre, redondear(suma(valores, (fila) => fila.valor)), metrica.tipo,
+                `${filtros.agregacion} por ${dimension.nombre.toLowerCase()}`, "bi-calculator", "emerald"),
+        ],
+        graficos: [
+            grafico("personalizado-grafico", `${metrica.nombre} por ${dimension.nombre}`,
+                filtros.tipoGrafico, valores.slice(0, 20).map((fila) => fila.grupo), [
+                    { nombre: metrica.nombre, valores: valores.slice(0, 20).map((fila) => fila.valor) },
+                ], metrica.tipo === "moneda" ? "moneda" : "numero"),
+        ],
+        tablas: [
+            tabla("personalizado-resumen", "Resultado agrupado", [
+                { clave: "grupo", nombre: dimension.nombre, tipo: "texto" },
+                { clave: "valor", nombre: metrica.nombre, tipo: metrica.tipo },
+                { clave: "registros", nombre: "Registros", tipo: "numero" },
+            ], valores),
+            tabla("personalizado-detalle", `Detalle: ${dataset.nombre}`, columnasDetalle, filasDetalle),
+        ],
+    };
+};
+
 const REPORTES_DISPONIBLES = {
     resumen: reporteResumen,
+    auditoria: reporteAuditoria,
     reservas: reporteReservas,
     ocupacion: reporteOcupacion,
     caja: reporteCaja,
     comprobantes: reporteComprobantes,
+    ventas: reporteVentas,
+    clientes: reporteClientes,
+    tendencias: reporteTendencias,
+    personalizado: reportePersonalizado,
 };
 
 export const generarReporte = async (reporteId, filtros = {}) => {
@@ -1569,6 +1929,14 @@ export const obtenerCatalogoReportes = async () => {
             caja: { tipo: "select", label: "Caja", opciones: catalogo.cajas.map((c) => ({ value: c.id, label: c.nombre })), vacio: "Todas las cajas" },
             metodoPago: { tipo: "select", label: "Método de pago", opciones: catalogo.metodosPago.map((m) => ({ value: m.id, label: m.nombre })), vacio: "Todos los métodos" },
             afectaEfectivo: { tipo: "select", label: "Afecta efectivo", opciones: [{ value: "S", label: "Sí" }, { value: "N", label: "No" }], vacio: "Todos" },
+            agrupacionClientes: {
+                tipo: "select",
+                label: "Agrupar ranking por",
+                opciones: [
+                    { value: "cliente", label: "Persona / cliente" },
+                    { value: "empresa", label: "Empresa" },
+                ],
+            },
         },
         reportes: Object.keys(REPORTES_DISPONIBLES).map((clave) => {
             const rep = REPORTES_CONFIG[clave] || {};
@@ -1577,5 +1945,3 @@ export const obtenerCatalogoReportes = async () => {
         periodos: PERIODOS,
     };
 };
-
-export { cargarCatalogosReportes, invalidarCatalogosReportes };

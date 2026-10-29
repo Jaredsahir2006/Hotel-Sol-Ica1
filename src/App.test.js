@@ -75,6 +75,7 @@ test('el menú lateral permite contraer y expandir las categorías', async () =>
   const categoriaPrincipal = screen.getByRole('button', { name: /recepción y reservas/i });
   expect(categoriaPrincipal).toHaveAttribute('aria-expanded', 'true');
   expect(screen.getByRole('button', { name: 'Reservas' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Registro de consumo' })).toBeInTheDocument();
 
   await userEvent.click(categoriaPrincipal);
   expect(screen.getByRole('button', { name: /recepción y reservas/i })).toHaveAttribute(

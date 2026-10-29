@@ -221,7 +221,7 @@ export const DATASETS_PERSONALIZADOS = {
         nombre: "Ventas de productos",
         descripcion: "Detalle de productos vendidos por recepción.",
         fecha: "fecha",
-        filtros: ["categoriaProducto"],
+        filtros: ["categoriaProducto", "producto"],
         metricas: [
             { clave: "importe", nombre: "Importe vendido", tipo: "moneda" },
             { clave: "cantidad", nombre: "Unidades", tipo: "numero" },

@@ -128,7 +128,6 @@ const CrudModule = ({ entidadKey }) => {
     useEffect(() => {
         const t = setTimeout(() => {
             setBusquedaDebounced(busqueda);
-            setPagina(1);
         }, 400);
         return () => clearTimeout(t);
     }, [busqueda]);
