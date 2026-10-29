@@ -16,6 +16,7 @@ import {
 import { fechaHora, soles } from "../utils/format";
 import { TURNOS_CAJA } from "../utils/caja";
 import { construirComprobantePago } from "../utils/comprobantePago";
+import { filtrarConceptosCaja, siguienteNumeroOperacion } from "../utils/operacionesCaja";
 import Paginacion from "../components/Paginacion";
 import { usePaginacion } from "../hooks/usePaginacion";
 
@@ -41,6 +42,8 @@ const Pagos = () => {
     const [mostrarApertura, setMostrarApertura] = useState(false);
     const [aperturaConfirmada, setAperturaConfirmada] = useState(null);
     const [aperturaAnterior, setAperturaAnterior] = useState(null);
+    const [busquedaConcepto, setBusquedaConcepto] = useState("");
+    const [filtroTipoConcepto, setFiltroTipoConcepto] = useState("todos");
     const [consultandoAnterior, setConsultandoAnterior] = useState(false);
     const [turnoCierre, setTurnoCierre] = useState(null);
     const [arqueo, setArqueo] = useState(null);
@@ -114,6 +117,16 @@ const Pagos = () => {
     const conceptoSeleccionado = catalogos.conceptos.find(
         (c) => String(c.id_concepto) === String(form.id_concepto)
     );
+    const conceptosFiltrados = filtrarConceptosCaja({
+        conceptos: catalogos.conceptos,
+        tipos: catalogos.tipos,
+        busqueda: busquedaConcepto,
+        signo: filtroTipoConcepto,
+        soloIngresos: Boolean(form.id_recepcion),
+    });
+    const proximaOperacion = siguienteNumeroOperacion(
+        pagos.map((pago) => pago.numero_operacion)
+    );
 
     const recepcionSeleccionada = recepciones.find(
         (r) => String(r.id_recepcion) === String(form.id_recepcion)
@@ -132,9 +145,14 @@ const Pagos = () => {
 
     const cambiar = (e) => {
         const { name, value } = e.target;
+        if (name === "id_recepcion") {
+            setFiltroTipoConcepto(value ? "+" : "todos");
+            setBusquedaConcepto("");
+        }
         setForm((prev) => {
             const siguiente = { ...prev, [name]: value };
             if (name === "id_recepcion") {
+                siguiente.id_concepto = "";
                 const recepcion = recepciones.find((r) => String(r.id_recepcion) === String(value));
                 siguiente.monto = recepcion
                     ? String(Number(recepcion.saldo_pendiente ?? recepcion.totaldeuda ?? 0).toFixed(2))
@@ -647,10 +665,37 @@ const Pagos = () => {
 
                             <label className="block text-xs font-semibold text-slate-700">
                                 Concepto *
-                                <select name="id_concepto" value={form.id_concepto} onChange={cambiar} className={`${inputClase} mt-1.5 font-normal`}>
+                                <input
+                                    type="search"
+                                    aria-label="Buscar concepto"
+                                    value={busquedaConcepto}
+                                    onChange={(e) => setBusquedaConcepto(e.target.value)}
+                                    placeholder="Buscar por concepto o tipo..."
+                                    className={`${inputClase} mt-1.5 font-normal`}
+                                />
+                                <select
+                                    aria-label="Filtrar conceptos por tipo"
+                                    value={filtroTipoConcepto}
+                                    onChange={(e) => setFiltroTipoConcepto(e.target.value)}
+                                    disabled={Boolean(form.id_recepcion)}
+                                    className={`${inputClase} mt-2 font-normal disabled:bg-slate-100`}
+                                >
+                                    {!form.id_recepcion && <option value="todos">Todos los tipos</option>}
+                                    <option value="+">Solo ingresos</option>
+                                    {!form.id_recepcion && <option value="-">Solo egresos</option>}
+                                </select>
+                                <select
+                                    aria-label="Seleccionar concepto"
+                                    name="id_concepto"
+                                    value={form.id_concepto}
+                                    onChange={cambiar}
+                                    className={`${inputClase} mt-2 font-normal`}
+                                >
                                     <option value="">-- Seleccione --</option>
-                                    {catalogos.conceptos.map((c) => {
-                                        const tipo = catalogos.tipos.find((t) => t.id_tipomovimiento === c.id_tipomovimiento);
+                                    {conceptosFiltrados.map((c) => {
+                                        const tipo = catalogos.tipos.find((t) =>
+                                            String(t.id_tipomovimiento) === String(c.id_tipomovimiento)
+                                        );
                                         return (
                                             <option key={c.id_concepto} value={c.id_concepto}>
                                                 {c.n_concepto} ({tipo?.n_tipomovimiento || "-"})
@@ -658,6 +703,11 @@ const Pagos = () => {
                                         );
                                     })}
                                 </select>
+                                {conceptosFiltrados.length === 0 && (
+                                    <span className="mt-1 block text-[11px] font-normal text-amber-700">
+                                        No hay conceptos que coincidan. Revisa el filtro o solicita al administrador que configure el concepto necesario.
+                                    </span>
+                                )}
                             </label>
 
                             <label className="block text-xs font-semibold text-slate-700">
@@ -682,12 +732,31 @@ const Pagos = () => {
 
                             <label className="block text-xs font-semibold text-slate-700">
                                 N° de operación
-                                <input type="text" name="numero_operacion" value={form.numero_operacion} onChange={cambiar} className={`${inputClase} mt-1.5 font-normal`} />
+                                <input
+                                    type="text"
+                                    aria-label="Número de operación generado"
+                                    value={proximaOperacion}
+                                    readOnly
+                                    className={`${inputClase} mt-1.5 bg-slate-50 font-normal`}
+                                />
+                                <span className="mt-1 block text-[11px] font-normal text-gray-500">
+                                    Se asigna automáticamente y se vuelve a verificar al registrar el movimiento.
+                                </span>
                             </label>
 
                             <label className="block text-xs font-semibold text-slate-700">
-                                Documento
-                                <input type="text" name="documento" value={form.documento} onChange={cambiar} className={`${inputClase} mt-1.5 font-normal`} />
+                                N° de comprobante o voucher
+                                <input
+                                    type="text"
+                                    aria-label="N° de comprobante o voucher"
+                                    name="documento"
+                                    value={form.documento}
+                                    onChange={cambiar}
+                                    className={`${inputClase} mt-1.5 font-normal`}
+                                />
+                                <span className="mt-1 block text-[11px] font-normal text-gray-500">
+                                    Referencia del comprobante del pago; no es el DNI/RUC. Los datos del huésped aparecen al asociar una recepción.
+                                </span>
                             </label>
 
                             <label className="block text-xs font-semibold text-slate-700">

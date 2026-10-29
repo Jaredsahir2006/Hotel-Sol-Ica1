@@ -43,6 +43,24 @@ test("no muestra estados bloqueados aunque su nombre contenga disponible", () =>
     expect(disponibles.map((habitacion) => habitacion.id_habitacion)).toEqual([2]);
 });
 
+test("permite buscar una habitación reservada cuando su reserva no se cruza con las fechas consultadas", () => {
+    const disponibles = buscarHabitacionesDisponibles([
+        { id_habitacion: 5, estado_nombre: "Reservada" },
+    ], [
+        { id_recepcion: 20, id_habitacion: 5, f_entrada: "2026-10-28", f_salida: "2026-10-30", f_salidac: null },
+    ], "2026-10-30", "2026-11-01");
+
+    expect(disponibles.map((habitacion) => habitacion.id_habitacion)).toEqual([5]);
+});
+
+test("no ofrece una habitación reservada si no existe una recepción activa que permita validar disponibilidad", () => {
+    const disponibles = buscarHabitacionesDisponibles([
+        { id_habitacion: 5, estado_nombre: "Reservada" },
+    ], [], "2026-10-28", "2026-10-30");
+
+    expect(disponibles).toEqual([]);
+});
+
 test("rechaza un rango de fechas inválido", () => {
     expect(() => buscarHabitacionesDisponibles(habitaciones, recepciones, "2026-10-30", "2026-10-30"))
         .toThrow("posterior");

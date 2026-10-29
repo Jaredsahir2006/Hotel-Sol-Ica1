@@ -55,15 +55,63 @@ export const ENTIDADES = {
     pk: "id_habitacion",
     buscarEn: ["numero", "detalle"],
     filtros: ["id_categoria", "id_estadohabitacion"],
+    obtenerNumeroPiso: (idPiso, refs) => {
+      const registro = (refs.piso || []).find(
+        (fila) => String(fila.id_piso) === String(idPiso)
+      );
+      const nombre = String(registro?.descripcion || "").toLocaleLowerCase("es");
+      const numero = nombre.match(/\b([1-4])\b/);
+      if (numero) return Number(numero[1]);
+      const palabra = [
+        ["primer", 1],
+        ["segund", 2],
+        ["tercer", 3],
+        ["cuart", 4],
+      ].find(([texto]) => nombre.includes(texto));
+      const piso = Number(palabra?.[1] || idPiso);
+      return Number.isInteger(piso) && piso >= 1 && piso <= 4 ? piso : null;
+    },
+    validarFormulario: (datos, refs) => {
+      const piso = ENTIDADES.habitaciones.obtenerNumeroPiso(datos.id_piso, refs);
+      const numero = String(datos.numero || "");
+      if (!piso) {
+        return "Selecciona un piso válido entre el 1 y el 4.";
+      }
+      if (!new RegExp(`^${piso}\\d{2}$`).test(numero)) {
+        return `El número debe tener tres dígitos y comenzar con ${piso}, según el piso seleccionado.`;
+      }
+      return "";
+    },
     campos: [
-      { name: "numero", label: "Número", type: "text", required: true },
+      {
+        name: "numero",
+        label: "Número de habitación",
+        type: "text",
+        required: true,
+        inputMode: "numeric",
+        maxLength: 3,
+        placeholder: "Ej. 101",
+      },
       { name: "id_categoria", label: "Categoría", type: "select", required: true,
         ref: { tabla: "categoria_habitacion", pk: "id_categoria", label: (r) => r.descripcion } },
       { name: "id_piso", label: "Piso", type: "select", required: true,
         ref: { tabla: "piso", pk: "id_piso", label: (r) => r.descripcion } },
       { name: "id_estadohabitacion", label: "Estado", type: "select", required: true,
         ref: { tabla: "estado_habitacion", pk: "id_estadohabitacion", label: (r) => r.descripcion } },
-      { name: "precio", label: "Precio por noche (S/)", type: "number", required: true, min: 0 },
+      {
+        name: "precio",
+        label: "Precio por noche (S/)",
+        type: "number",
+        required: true,
+        min: 0,
+        autocompletarDesde: {
+          tabla: "categoria_habitacion",
+          pk: "id_categoria",
+          valor: "precio",
+          campo: "id_categoria",
+        },
+        soloLecturaSiAutocompletado: true,
+      },
       { name: "detalle", label: "Detalle", type: "text" },
       { name: "f_creacion", type: "date", oculto: true, defecto: () => new Date().toISOString() },
     ],
@@ -72,15 +120,18 @@ export const ENTIDADES = {
   // EMPLEADOS -> tabla empleado
   empleados: {
     titulo: "Empleados",
-    descripcion: "Personal del hotel: contrato, cargo y planilla.",
+    descripcion: "Personal del hotel: registra los datos con DNI y asigna sus datos laborales.",
     icono: "bi-person-badge",
     tabla: "empleado",
     pk: "id_empleado",
     buscarEn: [],   // el nombre vive en la tabla persona (otra tabla); sin búsqueda de texto propia
     filtros: ["id_cargo", "turno"],
+    precargar: [
+      { tabla: "tipo_identidad", pk: "id_tipoidentidad" },
+      { tabla: "distrito", pk: "id_distrito" },
+    ],
     campos: [
-      { name: "id_persona", label: "Persona", type: "select", required: true,
-        ref: { tabla: "persona", pk: "id_persona", label: nombrePersona } },
+      { name: "id_persona", oculto: true },
       { name: "id_cargo", label: "Cargo", type: "select", required: true,
         ref: { tabla: "cargo", pk: "id_cargo", label: (r) => r.n_cargo } },
       { name: "id_contrato", label: "Contrato", type: "select", required: true,
@@ -472,6 +523,7 @@ export const ENTIDADES = {
     filtros: ["id_usuario", "id_rol", "vigente"],
     campos: [
       { name: "id_usuario", label: "Usuario", type: "select", required: true,
+        buscarReferencia: true,
         ref: { tabla: "usuario", pk: "id_usuario", label: (r) => r.logeo } },
       { name: "id_rol", label: "Rol", type: "select", required: true,
         ref: { tabla: "rol", pk: "id_rol", label: (r) => r.n_rol } },

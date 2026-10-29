@@ -14,6 +14,7 @@ import Reportes from "./Reportes";
 import Consumos from "./Consumos";
 import HistorialTrazabilidad from "./HistorialTrazabilidad";
 import { cerrarSesion as limpiarSesion, obtenerSesion } from "../services/authSession";
+import DashboardResumen from "./DashboardResumen";
 
 const MODULO_POR_VISTA = {
     checkinout: "RECEPCION",
@@ -749,7 +750,9 @@ const Dashboard = () => {
 
                     {/* INDICADORES */}
 
-                    <section className="mt-8">
+                    <DashboardResumen />
+
+                    <section className="hidden mt-8">
 
                         <div className="mb-5">
 
@@ -1051,10 +1054,10 @@ const Dashboard = () => {
 
                     {/* ACTIVIDAD */}
 
-                    <section className="mt-10 grid gap-6 xl:grid-cols-3">
+                    <section className="mt-10 grid gap-6 xl:grid-cols-1">
 
 
-                        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm xl:col-span-2">
+                        <div className="hidden rounded-2xl border border-gray-200 bg-white p-6 shadow-sm xl:col-span-2">
 
                             <div className="flex items-center justify-between">
 

@@ -2,6 +2,7 @@ import { supabase } from "../config/supabase";
 import { calcularTotalesEfectivo, calcularTotalesPorMetodo, TURNOS_CAJA } from "../utils/caja";
 import { calcularSaldoPendiente } from "../utils/comprobantePago";
 import { buscarHabitacionesDisponibles } from "../utils/disponibilidad";
+import { siguienteNumeroOperacion } from "../utils/operacionesCaja";
 import { invalidarCatalogosReportes } from "./reportesService";
 
 // ============================================================
@@ -134,9 +135,9 @@ export const listarHabitaciones = async () => {
         leer(supabase.from("piso").select("*").eq("estado", "1")),
     ]);
     return habitaciones.map((h) => {
-        const estado = estados.find((e) => e.id_estadohabitacion === h.id_estadohabitacion);
-        const categoria = categorias.find((c) => c.id_categoria === h.id_categoria);
-        const piso = pisos.find((p) => p.id_piso === h.id_piso);
+        const estado = estados.find((e) => String(e.id_estadohabitacion) === String(h.id_estadohabitacion));
+        const categoria = categorias.find((c) => String(c.id_categoria) === String(h.id_categoria));
+        const piso = pisos.find((p) => String(p.id_piso) === String(h.id_piso));
         return {
             ...h,
             estado_nombre: estado?.descripcion || "",
@@ -153,8 +154,8 @@ export const listarClientes = async () => {
         leer(supabase.from("empresa").select("*").eq("estado", "1")),
     ]);
     return clientes.map((c) => {
-        const persona = personas.find((p) => p.id_persona === c.id_persona);
-        const empresa = empresas.find((e) => e.id_empresa === c.id_empresa);
+        const persona = personas.find((p) => String(p.id_persona) === String(c.id_persona));
+        const empresa = empresas.find((e) => String(e.id_empresa) === String(c.id_empresa));
         return {
             ...c,
             persona,
@@ -187,8 +188,8 @@ export const listarRecepciones = async () => {
         listarHabitaciones(),
     ]);
     return recepciones.map((r) => {
-        const cliente = clientes.find((c) => c.id_cliente === r.id_cliente);
-        const habitacion = habitaciones.find((h) => h.id_habitacion === r.id_habitacion);
+        const cliente = clientes.find((c) => String(c.id_cliente) === String(r.id_cliente));
+        const habitacion = habitaciones.find((h) => String(h.id_habitacion) === String(r.id_habitacion));
         return {
             ...r,
             cliente_nombre: cliente?.nombre || `Cliente #${r.id_cliente}`,
@@ -738,7 +739,8 @@ export const registrarIngresoReserva = async (id_recepcion) => {
     if (String(habitacion.estado_nombre || "").toUpperCase().includes("OCUP")) {
         throw new Error("La habitación ya está ocupada; verifica si la reserva ya tiene check-in.");
     }
-    if (!String(habitacion.estado_nombre || "").toUpperCase().includes("DISPON")) {
+    const estadoHabitacion = String(habitacion.estado_nombre || "").toUpperCase();
+    if (!estadoHabitacion.includes("DISPON") && !estadoHabitacion.includes("RESERV")) {
         throw new Error("La habitación no está disponible para registrar el check-in.");
     }
 
@@ -1050,7 +1052,6 @@ export const registrarPago = async ({
     id_concepto,
     id_tipomovimiento,
     monto,
-    numero_operacion,
     documento,
     descripcion,
 }) => {
@@ -1109,6 +1110,14 @@ export const registrarPago = async ({
         throw new Error("No se pudo identificar al usuario que registra el movimiento.");
     }
 
+    const movimientosExistentes = await leerTodos(() => supabase
+        .from("movimiento_caja")
+        .select("numero_operacion")
+        .order("id_movimientocaja", { ascending: true }));
+    const numeroOperacion = siguienteNumeroOperacion(
+        movimientosExistentes.map((movimiento) => movimiento.numero_operacion)
+    );
+
     const movimiento = await insertarFila("movimiento_caja", {
         id_aperturacaja: aperturaId,
         id_tipomovimiento: tipoId,
@@ -1117,7 +1126,7 @@ export const registrarPago = async ({
         id_usuario: usuarioId,
         id_recepcion: recepcionId,
         id_venta: null,
-        numero_operacion: numero_operacion || `OP${Date.now()}`,
+        numero_operacion: numeroOperacion,
         documento: documento || null,
         descripcion: descripcion || concepto?.n_concepto || "Pago registrado",
         monto: valor,

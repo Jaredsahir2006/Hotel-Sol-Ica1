@@ -100,6 +100,82 @@ export const insertar = async (tabla, fila) => {
     lanzar(error);
 };
 
+export const buscarPersonaPorDni = async (numero) => {
+    const { data: tipoDni, error: errorTipo } = await supabase
+        .from("tipo_identidad")
+        .select("id_tipoidentidad")
+        .eq("estado", "1")
+        .ilike("abreviatura", "DNI")
+        .maybeSingle();
+    lanzar(errorTipo);
+    if (!tipoDni) throw new Error("No está configurado el tipo de identidad DNI.");
+
+    const { data: persona, error } = await supabase
+        .from("persona")
+        .select("*")
+        .eq("estado", "1")
+        .eq("id_tipoidentidad", tipoDni.id_tipoidentidad)
+        .eq("n_documento", numero)
+        .maybeSingle();
+    lanzar(error);
+    return { persona, id_tipoidentidad: tipoDni.id_tipoidentidad };
+};
+
+export const guardarEmpleadoConPersona = async ({ empleado, persona }) => {
+    const documento = String(persona.n_documento || "").trim();
+    if (!/^\d{8}$/.test(documento)) {
+        throw new Error("Consulta un DNI válido antes de guardar el empleado.");
+    }
+
+    const existente = await buscarPersonaPorDni(documento);
+    let idPersona = existente.persona?.id_persona;
+
+    if (!idPersona) {
+        const { data: personaCreada, error: errorPersona } = await supabase
+            .from("persona")
+            .insert([{
+                ...persona,
+                nombre: String(persona.nombre || "").trim(),
+                ap_paterno: String(persona.ap_paterno || "").trim(),
+                ap_materno: String(persona.ap_materno || "").trim() || null,
+                f_nacimiento: persona.f_nacimiento || null,
+                email: String(persona.email || "").trim() || null,
+                celular: String(persona.celular || "").trim() || null,
+                genero: persona.genero || null,
+                direccion: String(persona.direccion || "").trim() || null,
+                id_tipoidentidad: existente.id_tipoidentidad,
+                n_documento: documento,
+                id_distrito: Number(persona.id_distrito),
+                usucre: AUD.usuario,
+                pccre: AUD.pc,
+                feccre: ahora(),
+                estado: "1",
+            }])
+            .select("id_persona")
+            .single();
+        lanzar(errorPersona);
+        idPersona = personaCreada.id_persona;
+    }
+
+    const { error: errorEmpleado } = await supabase
+        .from("empleado")
+        .insert([{
+            ...empleado,
+            id_persona: idPersona,
+            usucre: AUD.usuario,
+            pccre: AUD.pc,
+            feccre: ahora(),
+            estado: "1",
+        }]);
+    if (errorEmpleado) {
+        const mensaje = traducir(errorEmpleado);
+        if (!existente.persona) {
+            throw new Error(`La persona quedó registrada, pero no se pudo completar el alta del empleado: ${mensaje}`);
+        }
+        throw new Error(mensaje);
+    }
+};
+
 export const actualizar = async (tabla, pk, id, fila) => {
     const { error } = await supabase.from(tabla).update({
         ...fila,

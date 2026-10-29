@@ -15,6 +15,7 @@ import {
 } from "../services/procesosService";
 import { fecha, hoy, noches, soles, sumarDias } from "../utils/format";
 import { construirPreCuenta } from "../utils/preCuenta";
+import { buscarHabitacionesDisponibles } from "../utils/disponibilidad";
 import Paginacion from "../components/Paginacion";
 import { usePaginacion } from "../hooks/usePaginacion";
 
@@ -37,6 +38,8 @@ const CheckInOut = () => {
     const [error, setError] = useState("");
     const [toast, setToast] = useState(null);
     const [busqueda, setBusqueda] = useState("");
+    const [busquedaClienteForm, setBusquedaClienteForm] = useState("");
+    const [busquedaHabitacionForm, setBusquedaHabitacionForm] = useState("");
     const [formAbierto, setFormAbierto] = useState(false);
     const [recepcionCheckout, setRecepcionCheckout] = useState(null);
     const [consumosCheckout, setConsumosCheckout] = useState([]);
@@ -98,8 +101,18 @@ const CheckInOut = () => {
         cargar();
     }, [cargar]);
 
-    const disponibles = habitaciones.filter((h) =>
-        String(h.estado_nombre || "").toUpperCase().includes("DISPON")
+    const disponibles = noches(form.f_entrada, form.f_salida) > 0
+        ? buscarHabitacionesDisponibles(habitaciones, recepciones, form.f_entrada, form.f_salida)
+        : [];
+    const clientesFormFiltrados = clientes.filter((cliente) =>
+        `${cliente.nombre} ${cliente.documento} ${cliente.id_cliente}`
+            .toLocaleLowerCase("es")
+            .includes(busquedaClienteForm.trim().toLocaleLowerCase("es"))
+    );
+    const habitacionesFormFiltradas = disponibles.filter((habitacion) =>
+        `${habitacion.numero} ${habitacion.categoria_nombre} ${habitacion.piso_nombre}`
+            .toLocaleLowerCase("es")
+            .includes(busquedaHabitacionForm.trim().toLocaleLowerCase("es"))
     );
     const conceptosIngreso = catalogos.conceptos.filter((concepto) =>
         catalogos.tipos.some(
@@ -123,6 +136,9 @@ const CheckInOut = () => {
         setForm((prev) => {
             const siguiente = { ...prev, [name]: value };
 
+            if (name === "f_entrada" || name === "f_salida") {
+                siguiente.id_habitacion = "";
+            }
             if (name === "id_cliente") {
                 const cliente = clientes.find((c) => String(c.id_cliente) === String(value));
                 siguiente.documento = cliente?.documento || "";
@@ -291,9 +307,7 @@ const CheckInOut = () => {
         return texto.includes(busqueda.toLowerCase());
     });
 
-    const activas = filtradas.filter((r) => !r.f_salidac);
-    const finalizadas = filtradas.filter((r) => r.f_salidac);
-    const ordenadas = [...activas, ...finalizadas];
+    const ordenadas = filtradas.filter((r) => !r.f_salidac);
     const paginacion = usePaginacion(ordenadas.length);
     const recepcionesPagina = ordenadas.slice(paginacion.desde, paginacion.hasta);
     const totalPreCuenta = recepcionCheckout
@@ -364,29 +378,62 @@ const CheckInOut = () => {
                     <h3 className="mb-4 font-semibold text-slate-900">Nuevo ingreso sin reserva</h3>
 
                     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                        <label className="block text-xs font-semibold text-slate-700">
-                            Cliente *
-                            <select name="id_cliente" value={form.id_cliente} onChange={cambiar} className={`${inputClase} mt-1.5 font-normal`}>
+                        <div>
+                            <label htmlFor="checkin-busqueda-cliente" className="block text-xs font-semibold text-slate-700">
+                                Buscar cliente por nombre, DNI/RUC o código
+                            </label>
+                            <input
+                                id="checkin-busqueda-cliente"
+                                type="search"
+                                value={busquedaClienteForm}
+                                onChange={(e) => setBusquedaClienteForm(e.target.value)}
+                                placeholder="Escribe nombre o documento..."
+                                className={`${inputClase} mt-1.5 font-normal`}
+                            />
+                            <label htmlFor="checkin-cliente" className="mt-2 block text-xs font-semibold text-slate-700">
+                                Cliente *
+                            </label>
+                            <select id="checkin-cliente" aria-label="Cliente *" name="id_cliente" value={form.id_cliente} onChange={cambiar} className={`${inputClase} mt-1.5 font-normal`}>
                                 <option value="">-- Seleccione --</option>
-                                {clientes.map((c) => (
+                                {clientesFormFiltrados.map((c) => (
                                     <option key={c.id_cliente} value={c.id_cliente}>
                                         {c.nombre} ({c.documento || "sin documento"})
                                     </option>
                                 ))}
                             </select>
-                        </label>
+                            {clientesFormFiltrados.length === 0 && (
+                                <p className="mt-1 text-[11px] font-normal text-amber-700">No hay clientes que coincidan.</p>
+                            )}
+                        </div>
 
-                        <label className="block text-xs font-semibold text-slate-700">
-                            Habitación disponible *
-                            <select name="id_habitacion" value={form.id_habitacion} onChange={cambiar} className={`${inputClase} mt-1.5 font-normal`}>
+                        <div>
+                            <label htmlFor="checkin-busqueda-habitacion" className="block text-xs font-semibold text-slate-700">
+                                Buscar habitación disponible
+                            </label>
+                            <input
+                                id="checkin-busqueda-habitacion"
+                                type="search"
+                                value={busquedaHabitacionForm}
+                                onChange={(e) => setBusquedaHabitacionForm(e.target.value)}
+                                placeholder="Número, categoría o piso..."
+                                className={`${inputClase} mt-1.5 font-normal`}
+                            />
+                            <label htmlFor="checkin-habitacion" className="mt-2 block text-xs font-semibold text-slate-700">
+                                Habitación disponible *
+                            </label>
+                            <select id="checkin-habitacion" aria-label="Habitación disponible *" name="id_habitacion" value={form.id_habitacion} onChange={cambiar} className={`${inputClase} mt-1.5 font-normal`}>
                                 <option value="">-- Seleccione --</option>
-                                {disponibles.map((h) => (
+                                {habitacionesFormFiltradas.map((h) => (
                                     <option key={h.id_habitacion} value={h.id_habitacion}>
                                         Hab. {h.numero} · {h.categoria_nombre} · {soles(h.precio)} / noche
                                     </option>
                                 ))}
                             </select>
-                        </label>
+                            <p className="mt-1 text-[11px] font-normal text-gray-500">
+                                Disponibles para {fecha(form.f_entrada)} – {fecha(form.f_salida)}.
+                                {disponibles.length === 0 ? " No hay habitaciones libres para esas fechas." : ""}
+                            </p>
+                        </div>
 
                         <label className="block text-xs font-semibold text-slate-700">
                             Atendido por *
@@ -420,7 +467,7 @@ const CheckInOut = () => {
 
                         <label className="block text-xs font-semibold text-slate-700">
                             Total de la estadía (S/) *
-                            <input type="number" min="0" step="0.01" name="d_inicial" value={form.d_inicial} onChange={cambiar} className={`${inputClase} mt-1.5 font-normal`} />
+                            <input type="number" min="0" step="0.01" name="d_inicial" value={form.d_inicial} readOnly className={`${inputClase} mt-1.5 bg-slate-50 font-normal`} />
                             <span className="mt-1 block text-[11px] font-normal text-gray-400">
                                 {nochesEstadia} noche(s) · estimado {soles(totalEstimado)}
                             </span>
@@ -655,7 +702,9 @@ const CheckInOut = () => {
                                 </tr>
                             ) : ordenadas.length === 0 ? (
                                 <tr>
-                                    <td colSpan={10} className="px-5 py-10 text-center text-gray-400">Sin recepciones</td>
+                                    <td colSpan={10} className="px-5 py-10 text-center text-gray-400">
+                                        No hay reservas o estadías activas. Los check-outs completados permanecen en el historial de reservas.
+                                    </td>
                                 </tr>
                             ) : (
                                 recepcionesPagina.map((r) => (
@@ -684,7 +733,10 @@ const CheckInOut = () => {
                                                             onClick={() => hacerCheckIn(r)}
                                                             disabled={
                                                                 guardando
-                                                                || !String(r.habitacion_estado || "").toUpperCase().includes("DISPON")
+                                                                || (
+                                                                    !String(r.habitacion_estado || "").toUpperCase().includes("DISPON")
+                                                                    && !String(r.habitacion_estado || "").toUpperCase().includes("RESERV")
+                                                                )
                                                             }
                                                             className="rounded-lg bg-emerald-100 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-50"
                                                         >

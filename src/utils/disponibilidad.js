@@ -24,17 +24,18 @@ export const buscarHabitacionesDisponibles = (
 
     return habitaciones.filter((habitacion) => {
         const estado = String(habitacion.estado_nombre || "").toUpperCase();
-        if (/NO DISPON|INDISPON|MANTEN|LIMPIE|FUERA|BLOQUEAD|RESERVAD/.test(estado)) return false;
+        if (/NO DISPON|INDISPON|MANTEN|LIMPIE|FUERA|BLOQUEAD/.test(estado)) return false;
         const disponible = estado.includes("DISPON");
         const ocupada = estado.includes("OCUP");
-        if (!disponible && !ocupada) return false;
+        const reservada = estado.includes("RESERV");
+        if (!disponible && !ocupada && !reservada) return false;
 
         const estanciasActivas = recepciones.filter((recepcion) =>
             String(recepcion.id_habitacion) === String(habitacion.id_habitacion)
             && !recepcion.f_salidac
         );
 
-        if (ocupada && estanciasActivas.length === 0) return false;
+        if ((ocupada || reservada) && estanciasActivas.length === 0) return false;
 
         return !estanciasActivas.some((recepcion) => {
             const entrada = fechaDia(recepcion.f_entrada);

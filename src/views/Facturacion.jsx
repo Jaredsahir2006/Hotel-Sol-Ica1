@@ -23,6 +23,7 @@ const Facturacion = () => {
     const [toast, setToast] = useState(null);
     const [filtro, setFiltro] = useState("TODOS");
     const [busqueda, setBusqueda] = useState("");
+    const [busquedaRecepcion, setBusquedaRecepcion] = useState("");
 
     const [form, setForm] = useState({
         id_recepcion: "",
@@ -62,6 +63,32 @@ const Facturacion = () => {
         () => recepciones.find((r) => String(r.id_recepcion) === String(form.id_recepcion)),
         [recepciones, form.id_recepcion]
     );
+    const recepcionesFiltradas = useMemo(() => {
+        const termino = busquedaRecepcion
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .toLowerCase()
+            .trim();
+        if (!termino) return recepciones;
+
+        return recepciones.filter((recepcion) => {
+            const texto = [
+                recepcion.id_recepcion,
+                recepcion.cliente_nombre,
+                recepcion.cliente_documento,
+                recepcion.habitacion_numero,
+                recepcion.f_entrada,
+                recepcion.f_salida,
+            ].join(" ").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+            return texto.includes(termino);
+        });
+    }, [recepciones, busquedaRecepcion]);
+    const recepcionesEnSelector = recepcionSeleccionada
+        && !recepcionesFiltradas.some(
+            (recepcion) => String(recepcion.id_recepcion) === String(recepcionSeleccionada.id_recepcion)
+        )
+        ? [recepcionSeleccionada, ...recepcionesFiltradas]
+        : recepcionesFiltradas;
 
     const cambiar = (e) => {
         const { name, value } = e.target;
@@ -147,14 +174,38 @@ const Facturacion = () => {
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                     <label className="block text-xs font-semibold text-slate-700 xl:col-span-2">
                         Recepción *
-                        <select name="id_recepcion" value={form.id_recepcion} onChange={cambiar} className={`${inputClase} mt-1.5 font-normal`}>
+                        <input
+                            type="search"
+                            aria-label="Buscar recepción para facturar"
+                            value={busquedaRecepcion}
+                            onChange={(e) => setBusquedaRecepcion(e.target.value)}
+                            placeholder="Buscar por huésped, DNI/RUC, habitación o número de recepción..."
+                            className={`${inputClase} mt-1.5 font-normal`}
+                        />
+                        <select
+                            aria-label="Seleccionar recepción para facturar"
+                            name="id_recepcion"
+                            value={form.id_recepcion}
+                            onChange={cambiar}
+                            className={`${inputClase} mt-2 font-normal`}
+                        >
                             <option value="">-- Seleccione --</option>
-                            {recepciones.map((r) => (
+                            {recepcionesEnSelector.map((r) => (
                                 <option key={r.id_recepcion} value={r.id_recepcion}>
                                     #{r.id_recepcion} · {r.cliente_nombre} · {soles(Number(r.d_inicial || 0) + Number(r.d_asistente || 0))}
                                 </option>
                             ))}
                         </select>
+                        <span className="mt-1 block text-[11px] font-normal text-gray-500">
+                            {busquedaRecepcion
+                                ? `${recepcionesFiltradas.length} de ${recepciones.length} recepciones`
+                                : `${recepciones.length} recepciones disponibles`}
+                        </span>
+                        {busquedaRecepcion && recepcionesFiltradas.length === 0 && (
+                            <span className="mt-1 block text-[11px] font-normal text-amber-700">
+                                No se encontraron recepciones con esos datos.
+                            </span>
+                        )}
                     </label>
 
                     <label className="block text-xs font-semibold text-slate-700">

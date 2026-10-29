@@ -189,6 +189,61 @@ test("registra el check-in sobre una reserva existente sin crear otra recepción
     expect(registrarCheckIn).not.toHaveBeenCalled();
 });
 
+test("permite registrar check-in de una reserva cuya habitación figura como reservada", async () => {
+    listarRecepciones.mockResolvedValue([{
+        ...crearRecepciones(1)[0],
+        f_entrada: hoy(),
+        habitacion_estado: "Reservada",
+    }]);
+    render(<CheckInOut />);
+
+    const botonCheckIn = await screen.findByRole("button", { name: "Registrar check-in" });
+    expect(botonCheckIn).toBeEnabled();
+    await userEvent.click(botonCheckIn);
+
+    await waitFor(() => expect(registrarIngresoReserva).toHaveBeenCalledWith(1));
+});
+
+test("filtra huéspedes y habitaciones disponibles para el período y calcula el total del ingreso", async () => {
+    listarClientes.mockResolvedValue([
+        { id_cliente: 31, nombre: "Ana Huamán", documento: "12345678" },
+        { id_cliente: 32, nombre: "Luis Pérez", documento: "87654321" },
+    ]);
+    listarHabitaciones.mockResolvedValue([
+        {
+            id_habitacion: 7,
+            numero: "101",
+            categoria_nombre: "Doble",
+            estado_nombre: "Disponible",
+            precio: 120,
+        },
+        {
+            id_habitacion: 8,
+            numero: "102",
+            categoria_nombre: "Simple",
+            estado_nombre: "Mantenimiento",
+            precio: 80,
+        },
+    ]);
+    listarRecepciones.mockResolvedValue([]);
+    render(<CheckInOut />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Nuevo ingreso sin reserva" }));
+    await userEvent.type(screen.getByLabelText("Buscar cliente por nombre, DNI/RUC o código"), "Ana");
+    const cliente = screen.getByLabelText("Cliente *");
+    expect(cliente).toHaveDisplayValue("-- Seleccione --");
+    expect(cliente.querySelectorAll("option")).toHaveLength(2);
+    await userEvent.selectOptions(cliente, "31");
+
+    await userEvent.type(screen.getByLabelText("Buscar habitación disponible"), "101");
+    const habitacion = screen.getByLabelText("Habitación disponible *");
+    expect(habitacion.querySelectorAll("option")).toHaveLength(2);
+    await userEvent.selectOptions(habitacion, "7");
+    const totalEstadia = screen.getByRole("spinbutton", { name: /Total de la estadía/ });
+    expect(totalEstadia).toHaveValue(120);
+    expect(totalEstadia).toHaveAttribute("readonly");
+});
+
 test("registra el adelanto del nuevo check-in con caja y concepto de ingreso", async () => {
     listarClientes.mockResolvedValue([{
         id_cliente: 31,
@@ -282,6 +337,36 @@ test("prepara la pre-cuenta con consumos y confirma el check-out", async () => {
     confirmar.mockRestore();
 });
 
+test("retira la recepción de check-in/check-out al terminar, conservándola como historial", async () => {
+    const recepcion = {
+        ...crearRecepciones(1)[0],
+        id_recepcion: 42,
+        cliente_nombre: "Juan Carlos Pérez López",
+        habitacion_numero: "102",
+        f_entrada: hoy(),
+        f_salidac: null,
+        habitacion_estado: "Ocupada",
+    };
+    listarRecepciones
+        .mockResolvedValueOnce([recepcion])
+        .mockResolvedValueOnce([{ ...recepcion, f_salidac: `${hoy()}T12:00:00` }]);
+    listarConsumosRecepcion.mockResolvedValue([]);
+    registrarCheckOut.mockResolvedValue({});
+    const confirmar = jest.spyOn(window, "confirm").mockReturnValue(true);
+    render(<CheckInOut />);
+
+    await screen.findByText("Juan Carlos Pérez López");
+    await userEvent.click(screen.getByRole("button", { name: "Preparar check-out" }));
+    await screen.findByRole("heading", { name: "Preparar check-out · Recepción #42" });
+    await screen.findByText("No hay consumos con detalle asociados a esta recepción.");
+    await userEvent.click(screen.getByRole("button", { name: "Registrar check-out" }));
+
+    await waitFor(() => expect(registrarCheckOut).toHaveBeenCalledWith(42));
+    expect(await screen.findByText(/No hay reservas o estadías activas/)).toBeInTheDocument();
+    expect(screen.queryByText("Juan Carlos Pérez López")).not.toBeInTheDocument();
+    confirmar.mockRestore();
+});
+
 test("Check-in/Check-out pagina las recepciones", async () => {
     render(<CheckInOut />);
 
@@ -302,6 +387,43 @@ test("Facturación pagina los comprobantes filtrados", async () => {
     expect(await screen.findByText("Cliente 26")).toBeInTheDocument();
     expect(screen.queryByText("Cliente 1")).not.toBeInTheDocument();
     expect(screen.getByText(/Mostrando 26–30 de 30 registros/)).toBeInTheDocument();
+});
+
+test("Facturación permite buscar recepciones por huésped, documento, habitación o número", async () => {
+    listarRecepcionesFacturables.mockResolvedValue([
+        {
+            id_recepcion: 42,
+            cliente_nombre: "Ana Huamán",
+            cliente_documento: "12345678",
+            habitacion_numero: "204",
+            d_inicial: 300,
+            d_asistente: 0,
+        },
+        {
+            id_recepcion: 43,
+            cliente_nombre: "Luis Pérez",
+            cliente_documento: "87654321",
+            habitacion_numero: "105",
+            d_inicial: 180,
+            d_asistente: 20,
+        },
+    ]);
+    render(<Facturacion />);
+
+    const selector = await screen.findByLabelText("Seleccionar recepción para facturar");
+    const busqueda = screen.getByLabelText("Buscar recepción para facturar");
+    await screen.findByRole("option", { name: /Ana Huamán/ });
+    expect(selector.querySelectorAll("option")).toHaveLength(3);
+
+    await userEvent.type(busqueda, "huaman");
+    expect(screen.getByRole("option", { name: /Ana Huamán/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Luis Pérez/ })).not.toBeInTheDocument();
+    expect(screen.getByText("1 de 2 recepciones")).toBeInTheDocument();
+
+    await userEvent.clear(busqueda);
+    await userEvent.type(busqueda, "87654321");
+    expect(screen.getByRole("option", { name: /Luis Pérez/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Ana Huamán/ })).not.toBeInTheDocument();
 });
 
 test("Facturación requiere una caja abierta para emitir comprobantes", async () => {
@@ -541,8 +663,13 @@ test("registra un cobro de recepción y ofrece descargar su constancia interna",
     render(<Pagos />);
 
     await userEvent.selectOptions(await screen.findByLabelText("Recepción con saldo (opcional)"), "42");
-    await userEvent.selectOptions(screen.getByLabelText("Concepto *"), "5");
+    const numeroOperacion = screen.getByLabelText("Número de operación generado");
+    await waitFor(() => expect(numeroOperacion).toHaveValue("OP-000031"));
+    expect(numeroOperacion).toHaveAttribute("readonly");
+    expect(screen.getByText(/Referencia del comprobante del pago; no es el DNI\/RUC/)).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Seleccionar concepto"), "5");
     await userEvent.selectOptions(screen.getByLabelText("Método de pago *"), "2");
+    await userEvent.type(screen.getByLabelText("N° de comprobante o voucher"), "VOUCHER-742");
     await userEvent.clear(screen.getByLabelText(/Monto \(S\/\)/));
     await userEvent.type(screen.getByLabelText(/Monto \(S\/\)/), "30");
     await userEvent.click(screen.getByRole("button", { name: "Registrar pago" }));
@@ -554,11 +681,47 @@ test("registra un cobro de recepción y ofrece descargar su constancia interna",
         id_metodopago: "2",
         id_tipomovimiento: 3,
         monto: 30,
+        documento: "VOUCHER-742",
     })));
     expect(await screen.findByText("Comprobante de pago generado · CP-19")).toBeInTheDocument();
     expect(screen.getByText("Saldo restante:").parentElement).toHaveTextContent("S/ 45.00");
     expect(screen.getByRole("button", { name: "Descargar constancia" })).toBeInTheDocument();
     expect(screen.getByText(/no reemplaza una boleta o factura/i)).toBeInTheDocument();
+});
+
+test("filtra conceptos por texto y solo ofrece ingresos al cobrar una recepción", async () => {
+    listarAperturasAbiertas.mockResolvedValue([{ id_aperturacaja: 8, numero_turno: "T0008" }]);
+    listarCatalogosPago.mockResolvedValue({
+        cajas: [],
+        usuarios: [],
+        metodos: [{ id_metodopago: 2, n_metodopago: "Efectivo" }],
+        conceptos: [
+            { id_concepto: 5, n_concepto: "Pago de hospedaje", id_tipomovimiento: 3 },
+            { id_concepto: 6, n_concepto: "Abono de reserva", id_tipomovimiento: 3 },
+            { id_concepto: 7, n_concepto: "Compra de suministros", id_tipomovimiento: 4 },
+        ],
+        tipos: [
+            { id_tipomovimiento: 3, n_tipomovimiento: "Ingreso", signo: "+" },
+            { id_tipomovimiento: 4, n_tipomovimiento: "Egreso", signo: "-" },
+        ],
+    });
+    listarRecepcionesPendientesPago.mockResolvedValue([{
+        id_recepcion: 42,
+        cliente_nombre: "Ana Huamán",
+        cliente_documento: "12345678",
+        saldo_pendiente: 75,
+        totaldeuda: 75,
+    }]);
+    render(<Pagos />);
+
+    await userEvent.selectOptions(await screen.findByLabelText("Recepción con saldo (opcional)"), "42");
+    const conceptos = screen.getByLabelText("Seleccionar concepto");
+    expect(conceptos.querySelectorAll("option")).toHaveLength(3);
+    expect(screen.queryByRole("option", { name: /Compra de suministros/ })).not.toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText("Buscar concepto"), "abono");
+    expect(screen.getByRole("option", { name: /Abono de reserva/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Pago de hospedaje/ })).not.toBeInTheDocument();
 });
 
 test("impide cobrar a una recepción un importe superior a su saldo", async () => {
@@ -579,7 +742,7 @@ test("impide cobrar a una recepción un importe superior a su saldo", async () =
     render(<Pagos />);
 
     await userEvent.selectOptions(await screen.findByLabelText("Recepción con saldo (opcional)"), "42");
-    await userEvent.selectOptions(screen.getByLabelText("Concepto *"), "5");
+    await userEvent.selectOptions(screen.getByLabelText("Seleccionar concepto"), "5");
     await userEvent.selectOptions(screen.getByLabelText("Método de pago *"), "2");
     await userEvent.clear(screen.getByLabelText(/Monto \(S\/\)/));
     await userEvent.type(screen.getByLabelText(/Monto \(S\/\)/), "80");

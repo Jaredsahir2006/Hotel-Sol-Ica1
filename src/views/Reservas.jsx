@@ -25,6 +25,7 @@ const Reservas = ({ onVerReservas }) => {
     const [modoCliente, setModoCliente] = useState("nuevo");
     const [tipoCliente, setTipoCliente] = useState("persona");
     const [clienteId, setClienteId] = useState("");
+    const [busquedaCliente, setBusquedaCliente] = useState("");
     const [metodoPagoId, setMetodoPagoId] = useState("");
     const [catalogosReserva, setCatalogosReserva] = useState(null);
     const [cargandoCatalogos, setCargandoCatalogos] = useState(false);
@@ -57,6 +58,11 @@ const Reservas = ({ onVerReservas }) => {
         (identidad) => String(identidad.id_tipoidentidad) === String(datosPersona.id_tipoidentidad)
     );
     const documentoEsDni = String(identidadPersona?.abreviatura || "").toUpperCase() === "DNI";
+    const clientesFiltrados = (catalogosReserva?.clientes || []).filter((cliente) =>
+        `${cliente.nombre} ${cliente.documento} ${cliente.id_cliente}`
+            .toLocaleLowerCase("es")
+            .includes(busquedaCliente.trim().toLocaleLowerCase("es"))
+    );
 
     const buscar = async (e) => {
         e.preventDefault();
@@ -587,22 +593,39 @@ const Reservas = ({ onVerReservas }) => {
                             </div>
 
                             {modoCliente === "existente" ? (
-                                <label className="block max-w-2xl text-xs font-semibold text-slate-700">
-                                    Huésped o empresa *
+                                <div className="max-w-2xl">
+                                    <label htmlFor="reserva-busqueda-cliente" className="block text-xs font-semibold text-slate-700">
+                                        Buscar huésped por nombre, DNI/RUC o código
+                                    </label>
+                                    <input
+                                        id="reserva-busqueda-cliente"
+                                        type="search"
+                                        value={busquedaCliente}
+                                        onChange={(e) => setBusquedaCliente(e.target.value)}
+                                        placeholder="Escribe nombre o documento..."
+                                        className={`${inputClase} mt-1.5 font-normal`}
+                                    />
+                                    <label htmlFor="reserva-cliente-registrado" className="mt-3 block text-xs font-semibold text-slate-700">
+                                        Huésped o empresa *
+                                    </label>
                                     <select
+                                        id="reserva-cliente-registrado"
                                         aria-label="Huésped registrado"
                                         value={clienteId}
                                         onChange={(e) => setClienteId(e.target.value)}
                                         className={`${inputClase} mt-1.5 font-normal`}
                                     >
                                         <option value="">-- Seleccione --</option>
-                                        {catalogosReserva.clientes.map((cliente) => (
+                                        {clientesFiltrados.map((cliente) => (
                                             <option key={cliente.id_cliente} value={cliente.id_cliente}>
                                                 {cliente.nombre} · {cliente.documento || "Sin documento"}
                                             </option>
                                         ))}
                                     </select>
-                                </label>
+                                    {clientesFiltrados.length === 0 && (
+                                        <p className="mt-2 text-xs text-amber-700">No hay huéspedes que coincidan con la búsqueda.</p>
+                                    )}
+                                </div>
                             ) : (
                                 <>
                                     <div className="mb-4 flex flex-wrap gap-2">
