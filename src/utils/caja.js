@@ -1,3 +1,5 @@
+export const TURNOS_CAJA = ["Mañana", "Tarde", "Noche"];
+
 const aCentimos = (monto) => {
     const valor = Number(monto);
     if (!Number.isFinite(valor)) {

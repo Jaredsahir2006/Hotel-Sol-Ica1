@@ -193,10 +193,19 @@ const CheckInOut = () => {
     const paginacion = usePaginacion(ordenadas.length);
     const recepcionesPagina = ordenadas.slice(paginacion.desde, paginacion.hasta);
 
+    const esReservaPendiente = (r) =>
+        !r.f_salidac
+        && (String(r.f_entrada || "").slice(0, 10) > hoy()
+            || !String(r.habitacion_estado || "").toUpperCase().includes("OCUP"));
+
     const estadoBadge = (r) =>
         r.f_salidac ? (
             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
                 Check-out
+            </span>
+        ) : esReservaPendiente(r) ? (
+            <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
+                Pendiente de check-in
             </span>
         ) : (
             <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
@@ -399,14 +408,18 @@ const CheckInOut = () => {
                                         <td className="px-5 py-3">{estadoBadge(r)}</td>
                                         <td className="px-5 py-3">
                                             {!r.f_salidac ? (
-                                                <button
-                                                    onClick={() => hacerCheckOut(r)}
-                                                    disabled={guardando}
-                                                    className="rounded-lg bg-blue-100 px-3 py-1.5 text-xs font-semibold text-blue-800 hover:bg-blue-200 disabled:opacity-60"
-                                                >
-                                                    <i className="bi bi-box-arrow-right mr-1"></i>
-                                                    Check-out
-                                                </button>
+                                                esReservaPendiente(r) ? (
+                                                    <span className="text-xs text-amber-700">A la espera del check-in</span>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => hacerCheckOut(r)}
+                                                        disabled={guardando}
+                                                        className="rounded-lg bg-blue-100 px-3 py-1.5 text-xs font-semibold text-blue-800 hover:bg-blue-200 disabled:opacity-60"
+                                                    >
+                                                        <i className="bi bi-box-arrow-right mr-1"></i>
+                                                        Check-out
+                                                    </button>
+                                                )
                                             ) : (
                                                 <span className="text-xs text-gray-400">{fecha(r.f_salidac)}</span>
                                             )}

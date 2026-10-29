@@ -7,6 +7,7 @@ import CrudModule from "../components/CrudModule";
 import { ENTIDADES } from "../config/entidades";
 
 import CheckInOut from "./CheckInOut";
+import Reservas from "./Reservas";
 import Pagos from "./Pagos";
 import Facturacion from "./Facturacion";
 import Reportes from "./Reportes";
@@ -19,6 +20,7 @@ const MENU_CATEGORIAS = [
         opciones: [
             { clave: "checkinout", nombre: "Check-in / Check-out", icono: "bi-door-open" },
             { clave: "reservas", nombre: "Reservas", icono: "bi-calendar-check" },
+            { clave: "reservas_lista", nombre: "Historial de reservas", icono: "bi-list-ul" },
             { clave: "huespedes", nombre: "Huéspedes", icono: "bi-people" },
         ],
     },
@@ -539,6 +541,8 @@ const Dashboard = () => {
 
                     {vista === "checkinout" && <CheckInOut />}
 
+                    {vista === "reservas" && <Reservas onVerReservas={() => abrirVista("reservas_lista")} />}
+
                     {vista === "pagos" && <Pagos />}
 
                     {vista === "facturacion" && <Facturacion />}
@@ -547,6 +551,10 @@ const Dashboard = () => {
 
                     {vista !== "dashboard" && ENTIDADES[vista] && (
                         <CrudModule key={vista} entidadKey={vista} />
+                    )}
+
+                    {vista === "reservas_lista" && (
+                        <CrudModule key="reservas" entidadKey="reservas" />
                     )}
 
                     {vista === "dashboard" && (

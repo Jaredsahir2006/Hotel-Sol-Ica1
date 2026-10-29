@@ -1,5 +1,5 @@
 import { supabase } from "../config/supabase";
-import { DATASETS_PERSONALIZADOS } from "../config/reportes";
+import { DATASETS_PERSONALIZADOS, PERIODOS, REPORTES as REPORTES_CONFIG } from "../config/reportes";
 import {
     agregarValores,
     clavePeriodo,
@@ -1522,4 +1522,60 @@ const reporteComprobantes = async (filtros, catalogo) => {
     };
 };
 
-// SERVICE_CONTINUA_AQUI
+const REPORTES_DISPONIBLES = {
+    resumen: reporteResumen,
+    reservas: reporteReservas,
+    ocupacion: reporteOcupacion,
+    caja: reporteCaja,
+    comprobantes: reporteComprobantes,
+};
+
+export const generarReporte = async (reporteId, filtros = {}) => {
+    if (!reporteId) {
+        throw new Error("Debe seleccionar un tipo de reporte.");
+    }
+    const generador = REPORTES_DISPONIBLES[reporteId];
+    if (!generador) {
+        throw new Error(`El reporte "${reporteId}" no está disponible.`);
+    }
+    const filtrosNormalizados = normalizarFiltros(filtros);
+    const catalogo = await cargarCatalogosReportes();
+    const resultado = await generador(filtrosNormalizados, catalogo);
+    return {
+        id: reporteId,
+        ...resultado,
+        contexto: construirContexto(filtrosNormalizados, catalogo),
+        filtros: filtrosNormalizados,
+    };
+};
+
+export const obtenerCatalogoReportes = async () => {
+    const catalogo = await cargarCatalogosReportes();
+    return {
+        filtros: {
+            fechas: { tipo: "fechas", label: "Rango de fechas", requerido: true },
+            periodo: { tipo: "select", label: "Agrupar por", opciones: PERIODOS },
+            cliente: { tipo: "select", label: "Persona / cliente", opciones: catalogo.clientes.map((c) => ({ value: c.id, label: c.etiqueta })), vacio: "Todas las personas" },
+            empresa: { tipo: "select", label: "Empresa", opciones: catalogo.empresas.map((e) => ({ value: e.id, label: e.nombre })), vacio: "Todas las empresas" },
+            usuario: { tipo: "select", label: "Responsable", opciones: catalogo.usuarios.map((u) => ({ value: u.id, label: u.nombre })), vacio: "Todos los responsables" },
+            categoriaHabitacion: { tipo: "select", label: "Categoría de habitación", opciones: catalogo.categoriasHabitacion.map((c) => ({ value: c.id, label: c.nombre })), vacio: "Todas las categorías" },
+            estadoHabitacion: { tipo: "select", label: "Estado de habitación", opciones: catalogo.estadosHabitacion.map((e) => ({ value: e.id, label: e.nombre })), vacio: "Todos los estados" },
+            categoriaProducto: { tipo: "select", label: "Categoría de producto", opciones: catalogo.categoriasProducto.map((c) => ({ value: c.id, label: c.nombre })), vacio: "Todas las categorías" },
+            producto: { tipo: "text", label: "Producto contiene", placeholder: "Ej. cerveza, papas..." },
+            estadoReserva: { tipo: "select", label: "Estado de la reserva", opciones: [{ value: "en_curso", label: "En curso" }, { value: "proxima", label: "Próxima" }, { value: "finalizada", label: "Finalizada" }], vacio: "Todos los estados" },
+            tipoComprobante: { tipo: "select", label: "Tipo de comprobante", opciones: [{ value: "FACTURA", label: "Facturas" }, { value: "BOLETA", label: "Boletas" }], vacio: "Facturas y boletas" },
+            tipoMovimiento: { tipo: "select", label: "Tipo de movimiento", opciones: catalogo.tiposMovimiento.map((t) => ({ value: t.id, label: t.nombre })), vacio: "Ingresos y egresos" },
+            concepto: { tipo: "select", label: "Concepto de caja", opciones: catalogo.conceptosBase.map((c) => ({ value: c.nombre, label: c.nombre })), vacio: "Todos los conceptos" },
+            caja: { tipo: "select", label: "Caja", opciones: catalogo.cajas.map((c) => ({ value: c.id, label: c.nombre })), vacio: "Todas las cajas" },
+            metodoPago: { tipo: "select", label: "Método de pago", opciones: catalogo.metodosPago.map((m) => ({ value: m.id, label: m.nombre })), vacio: "Todos los métodos" },
+            afectaEfectivo: { tipo: "select", label: "Afecta efectivo", opciones: [{ value: "S", label: "Sí" }, { value: "N", label: "No" }], vacio: "Todos" },
+        },
+        reportes: Object.keys(REPORTES_DISPONIBLES).map((clave) => {
+            const rep = REPORTES_CONFIG[clave] || {};
+            return { id: clave, nombre: rep.nombre || clave, descripcion: rep.descripcion || "" };
+        }),
+        periodos: PERIODOS,
+    };
+};
+
+export { cargarCatalogosReportes, invalidarCatalogosReportes };

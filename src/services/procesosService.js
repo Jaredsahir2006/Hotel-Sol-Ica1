@@ -1,5 +1,6 @@
 import { supabase } from "../config/supabase";
-import { calcularTotalesEfectivo, calcularTotalesPorMetodo } from "../utils/caja";
+import { calcularTotalesEfectivo, calcularTotalesPorMetodo, TURNOS_CAJA } from "../utils/caja";
+import { buscarHabitacionesDisponibles } from "../utils/disponibilidad";
 
 // ============================================================
 // Servicios de los procesos operativos:
@@ -15,6 +16,10 @@ import { calcularTotalesEfectivo, calcularTotalesPorMetodo } from "../utils/caja
 
 const AUD = { usuario: "WEB", pc: "PC-WEB" };
 const ahora = () => new Date().toISOString();
+const hoyLocal = () => {
+    const hoy = new Date();
+    return `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}-${String(hoy.getDate()).padStart(2, "0")}`;
+};
 
 const auditar = (fila, esNuevo = true) => ({
     ...fila,
@@ -87,6 +92,13 @@ const saldoSiguienteApertura = (apertura) => {
     );
     if (coincidencia) return Number(coincidencia[1]);
     return Number(apertura?.monto_declarado ?? apertura?.monto_sistema ?? 0);
+};
+
+const turnoDeObservacion = (observacion) => {
+    const coincidencia = String(observacion || "").match(/Turno operativo:\s*(Mañana|Tarde|Noche)/i);
+    return coincidencia
+        ? TURNOS_CAJA.find((turno) => turno.toLowerCase() === coincidencia[1].toLowerCase()) || ""
+        : "";
 };
 
 const numeroSiguiente = (numeros) => {
@@ -166,7 +178,7 @@ export const listarRecepciones = async () => {
     const [recepciones, clientes, habitaciones] = await Promise.all([
         leer(supabase.from("recepcion").select("*").eq("estado", "1").order("id_recepcion", { ascending: false })),
         listarClientes(),
-        leer(supabase.from("habitacion").select("*").eq("estado", "1")),
+        listarHabitaciones(),
     ]);
     return recepciones.map((r) => {
         const cliente = clientes.find((c) => c.id_cliente === r.id_cliente);
@@ -176,6 +188,7 @@ export const listarRecepciones = async () => {
             cliente_nombre: cliente?.nombre || `Cliente #${r.id_cliente}`,
             cliente_documento: cliente?.documento || r.documento || "",
             habitacion_numero: habitacion?.numero || r.id_habitacion,
+            habitacion_estado: habitacion?.estado_nombre || "",
         };
     });
 };
@@ -183,6 +196,205 @@ export const listarRecepciones = async () => {
 export const listarRecepcionesActivas = async () => {
     const recepciones = await listarRecepciones();
     return recepciones.filter((r) => !r.f_salidac);
+};
+
+export const buscarDisponibilidadHabitaciones = async ({ f_entrada, f_salida }) => {
+    const [habitaciones, recepciones] = await Promise.all([
+        listarHabitaciones(),
+        listarRecepciones(),
+    ]);
+    return buscarHabitacionesDisponibles(habitaciones, recepciones, f_entrada, f_salida);
+};
+
+export const listarCatalogosReserva = async () => {
+    const [clientes, identidades, distritos, metodos] = await Promise.all([
+        listarClientes(),
+        leer(supabase.from("tipo_identidad").select("*").eq("estado", "1").order("abreviatura")),
+        leer(supabase.from("distrito").select("*").eq("estado", "1").order("d_distrito")),
+        leer(supabase.from("metodo_pago").select("*").eq("estado", "1").order("n_metodopago")),
+    ]);
+    return { clientes, identidades, distritos, metodos };
+};
+
+const insertarClienteReserva = async ({ tipo_cliente, persona, empresa }, clientes) => {
+    const documento = String(tipo_cliente === "empresa" ? empresa.ruc : persona.n_documento).trim();
+    const clienteExistente = clientes.find((cliente) => cliente.documento === documento);
+    if (clienteExistente) {
+        return {
+            id_cliente: clienteExistente.id_cliente,
+            tipo_cliente: clienteExistente.id_empresa ? "empresa" : "persona",
+            documento: clienteExistente.documento,
+            nombre: clienteExistente.nombre,
+        };
+    }
+
+    let idEmpresa = null;
+    let idPersona = null;
+    if (tipo_cliente === "empresa") {
+        const { data: empresaExistente, error: errorEmpresa } = await supabase
+            .from("empresa")
+            .select("id_empresa")
+            .eq("ruc", documento)
+            .eq("estado", "1")
+            .maybeSingle();
+        lanzar(errorEmpresa);
+        const filaEmpresa = empresaExistente || await insertarFila("empresa", {
+            ruc: documento,
+            razon_social: empresa.razon_social.trim(),
+            direccion: empresa.direccion?.trim() || null,
+            telefono: empresa.telefono?.trim() || null,
+        });
+        idEmpresa = filaEmpresa.id_empresa;
+    } else {
+        const { data: personaExistente, error: errorPersona } = await supabase
+            .from("persona")
+            .select("id_persona")
+            .eq("n_documento", documento)
+            .eq("estado", "1")
+            .maybeSingle();
+        lanzar(errorPersona);
+        const filaPersona = personaExistente || await insertarFila("persona", {
+            id_tipoidentidad: Number(persona.id_tipoidentidad),
+            n_documento: documento,
+            nombre: persona.nombre.trim(),
+            ap_paterno: persona.ap_paterno.trim(),
+            ap_materno: persona.ap_materno?.trim() || null,
+            email: persona.email?.trim() || null,
+            celular: persona.celular?.trim() || null,
+            id_distrito: Number(persona.id_distrito),
+        });
+        idPersona = filaPersona.id_persona;
+        const clientePersona = clientes.find(
+            (cliente) => String(cliente.id_persona) === String(idPersona)
+        );
+        if (clientePersona) {
+            return {
+                id_cliente: clientePersona.id_cliente,
+                tipo_cliente: clientePersona.id_empresa ? "empresa" : "persona",
+                documento: clientePersona.documento,
+                nombre: clientePersona.nombre,
+            };
+        }
+    }
+
+    const cliente = await insertarFila("cliente", {
+        id_persona: idPersona,
+        id_empresa: idEmpresa,
+    });
+    return {
+        id_cliente: cliente.id_cliente,
+        tipo_cliente,
+        documento,
+        nombre: tipo_cliente === "empresa"
+            ? empresa.razon_social.trim()
+            : nombrePersona({
+                nombre: persona.nombre,
+                ap_paterno: persona.ap_paterno,
+                ap_materno: persona.ap_materno,
+            }),
+    };
+};
+
+export const registrarReserva = async ({
+    id_cliente,
+    tipo_cliente,
+    persona,
+    empresa,
+    id_habitacion,
+    id_metodopago,
+    f_entrada,
+    f_salida,
+    huespedes,
+    total,
+}) => {
+    const habitacionId = Number(id_habitacion);
+    const metodoId = Number(id_metodopago);
+    const huespedesTotal = Number(huespedes);
+    const totalIngresado = Number(total);
+    if (!Number.isInteger(habitacionId) || habitacionId <= 0) throw new Error("Selecciona una habitación válida.");
+    if (!Number.isInteger(metodoId) || metodoId <= 0) throw new Error("Selecciona un método de pago previsto.");
+    if (!Number.isInteger(huespedesTotal) || huespedesTotal < 1) throw new Error("La cantidad de huéspedes no es válida.");
+    if (!Number.isFinite(totalIngresado) || totalIngresado < 0) throw new Error("El total de la reserva no es válido.");
+    const usuarioId = usuarioActualId();
+    if (!Number.isInteger(Number(usuarioId)) || Number(usuarioId) <= 0) {
+        throw new Error("No se pudo identificar al usuario que registra la reserva.");
+    }
+    if (!f_entrada || f_entrada < hoyLocal()) {
+        throw new Error("La fecha de entrada no puede ser anterior a hoy.");
+    }
+
+    const nochesReserva = Math.round(
+        (new Date(`${f_salida}T12:00:00`) - new Date(`${f_entrada}T12:00:00`)) / 86400000
+    );
+    if (!Number.isFinite(nochesReserva) || nochesReserva <= 0) {
+        throw new Error("La fecha de salida debe ser posterior a la fecha de entrada.");
+    }
+
+    const disponibles = await buscarDisponibilidadHabitaciones({ f_entrada, f_salida });
+    if (!disponibles.some((habitacion) => String(habitacion.id_habitacion) === String(habitacionId))) {
+        throw new Error("La habitación ya no está disponible para esas fechas. Actualiza la búsqueda.");
+    }
+
+    const metodo = await leer(supabase
+        .from("metodo_pago")
+        .select("id_metodopago")
+        .eq("id_metodopago", metodoId)
+        .eq("estado", "1")
+        .maybeSingle());
+    if (!metodo) throw new Error("El método de pago previsto no existe o está inactivo.");
+
+    let clienteId = Number(id_cliente);
+    let clienteDetalle;
+    if (!Number.isInteger(clienteId) || clienteId <= 0) {
+        if (!["persona", "empresa"].includes(tipo_cliente)) throw new Error("Selecciona o registra un huésped válido.");
+        if (tipo_cliente === "persona") {
+            if (!persona?.id_tipoidentidad || !persona?.id_distrito || !persona?.nombre?.trim()
+                || !persona?.ap_paterno?.trim() || !/^\d{8,12}$/.test(String(persona?.n_documento || ""))) {
+                throw new Error("Completa tipo y número de documento, nombres, apellido paterno y distrito del huésped.");
+            }
+        } else if (!/^\d{11}$/.test(String(empresa?.ruc || ""))
+            || !empresa?.razon_social?.trim()) {
+            throw new Error("Ingresa un RUC de 11 dígitos y la razón social.");
+        }
+        const clientes = await listarClientes();
+        clienteDetalle = await insertarClienteReserva({ tipo_cliente, persona, empresa }, clientes);
+        clienteId = clienteDetalle.id_cliente;
+    } else {
+        const clientes = await listarClientes();
+        clienteDetalle = clientes.find((cliente) => String(cliente.id_cliente) === String(clienteId));
+        if (!clienteDetalle) throw new Error("El huésped seleccionado no existe o está inactivo.");
+    }
+    if (!Number.isInteger(clienteId) || clienteId <= 0) throw new Error("No se pudo identificar al cliente de la reserva.");
+    const tipoDocumentoReserva = clienteDetalle
+        ? clienteDetalle.tipo_cliente === "empresa" || clienteDetalle.id_empresa ? "FACTURA" : "BOLETA"
+        : tipo_cliente === "empresa" ? "FACTURA" : "BOLETA";
+    const documentoReserva = clienteDetalle?.documento
+        ?? (tipo_cliente === "empresa" ? empresa?.ruc : persona?.n_documento);
+
+    const reserva = await insertarFila("recepcion", {
+        id_cliente: clienteId,
+        id_habitacion: habitacionId,
+        id_usuario: usuarioId,
+        id_metodopago: metodoId,
+        f_entrada,
+        f_salida,
+        d_inicial: Math.round(totalIngresado * 100) / 100,
+        adelanto: 0,
+        d_asistente: 0,
+        t_pagado: 0,
+        contarjeta: 0,
+        totaldeuda: Math.round(totalIngresado * 100) / 100,
+        tipodocumento: tipoDocumentoReserva,
+        documento: documentoReserva || null,
+        f_salidac: null,
+    });
+
+    return {
+        ...reserva,
+        huespedes: huespedesTotal,
+        cliente_nombre: clienteDetalle?.nombre || "",
+        cliente_documento: documentoReserva || "",
+    };
 };
 
 export const registrarCheckIn = async ({
@@ -238,6 +450,17 @@ export const registrarCheckOut = async (id_recepcion) => {
     lanzar(error);
     if (!recepcion) throw new Error("La recepción no existe.");
     if (recepcion.f_salidac) throw new Error("Esta recepción ya tiene registrado el check-out.");
+    if (String(recepcion.f_entrada || "").slice(0, 10) > hoyLocal()) {
+        throw new Error("No se puede registrar el check-out antes de la fecha de entrada.");
+    }
+
+    const habitaciones = await listarHabitaciones();
+    const habitacion = habitaciones.find(
+        (item) => String(item.id_habitacion) === String(recepcion.id_habitacion)
+    );
+    if (!String(habitacion?.estado_nombre || "").toUpperCase().includes("OCUP")) {
+        throw new Error("La reserva todavía no tiene check-in. Registra el ingreso antes del check-out.");
+    }
 
     const actualizada = await actualizarFila("recepcion", "id_recepcion", id_recepcion, {
         f_salidac: ahora(),
@@ -267,6 +490,7 @@ export const listarAperturas = async () => {
         ...a,
         caja_nombre: cajas.find((c) => c.id_caja === a.id_caja)?.n_caja || `Caja #${a.id_caja}`,
         usuario_nombre: usuarios.find((u) => u.id_usuario === a.id_usuario)?.logeo || `Usuario #${a.id_usuario}`,
+        turno_nombre: turnoDeObservacion(a.observacion),
         abierta: String(a.situacion).toUpperCase() === "A",
     }));
 };
@@ -310,13 +534,22 @@ export const obtenerArqueoCaja = async (id_aperturacaja) => {
     };
 };
 
-export const abrirCaja = async ({ id_caja, id_usuario, monto_inicial, observacion, saldo_anterior }) => {
+export const abrirCaja = async ({
+    id_caja,
+    id_usuario,
+    monto_inicial,
+    observacion,
+    saldo_anterior,
+    turno,
+}) => {
     const cajaId = Number(id_caja);
     const usuarioId = Number(id_usuario || usuarioActualId());
     const montoIngresado = Number(monto_inicial);
     if (!Number.isInteger(cajaId) || cajaId <= 0) throw new Error("Selecciona una caja válida.");
     if (!Number.isInteger(usuarioId) || usuarioId <= 0) throw new Error("No se pudo identificar al usuario que abre la caja.");
     if (!Number.isFinite(montoIngresado) || montoIngresado < 0) throw new Error("El monto inicial debe ser un importe válido y no negativo.");
+    const turnoOperativo = TURNOS_CAJA.find((opcion) => opcion === turno);
+    if (!turnoOperativo) throw new Error("Selecciona un turno operativo válido.");
     const monto = Math.round(montoIngresado * 100) / 100;
 
     const [caja, aperturasAbiertas, todas, anterior] = await Promise.all([
@@ -339,6 +572,7 @@ export const abrirCaja = async ({ id_caja, id_usuario, monto_inicial, observacio
         ? Math.round((monto - saldoAnterior) * 100) / 100
         : null;
     const notaApertura = [
+        `Turno operativo: ${turnoOperativo}.`,
         observacion?.trim(),
         diferenciaInicial !== null
             ? `Fondo anterior reportado: S/ ${saldoAnterior.toFixed(2)}. Diferencia de apertura: S/ ${diferenciaInicial.toFixed(2)}.`
@@ -362,7 +596,7 @@ export const abrirCaja = async ({ id_caja, id_usuario, monto_inicial, observacio
     });
 
     await actualizarFila("caja", "id_caja", cajaId, { aperturada: "1" });
-    return apertura;
+    return { ...apertura, turno_nombre: turnoOperativo };
 };
 
 export const cerrarCaja = async (id_aperturacaja, {

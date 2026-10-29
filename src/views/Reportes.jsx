@@ -1,9 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { obtenerReporte } from "../services/procesosService";
+import { generarReporte, obtenerCatalogoReportes } from "../services/reportesService";
 import { fecha, fechaHora, hoy, soles } from "../utils/format";
+import { exportarReportePdf, exportarReporteExcel } from "../utils/exportarReportes";
 
 const inputClase =
+    "w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100";
+
+const selectClase =
     "w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100";
 
 const inicioMes = () => {
@@ -12,9 +16,22 @@ const inicioMes = () => {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
 };
 
+const colores = [
+    "#1d4ed8",
+    "#0f766e",
+    "#d97706",
+    "#dc2626",
+    "#7c3aed",
+    "#0891b2",
+    "#65a30d",
+    "#db2777",
+    "#475569",
+    "#ca8a04",
+];
+
 const Tarjeta = ({ titulo, valor, detalle, icono, color }) => (
     <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify-between gap-4">
             <div>
                 <p className="text-sm text-gray-500">{titulo}</p>
                 <p className="mt-2 text-2xl font-bold text-slate-900">{valor}</p>
@@ -27,34 +44,208 @@ const Tarjeta = ({ titulo, valor, detalle, icono, color }) => (
     </div>
 );
 
+const formatearValor = (valor, formato) => {
+    if (valor == null || valor === "") return "-";
+    if (formato === "moneda") return soles(valor);
+    if (formato === "porcentaje") return `${Number(valor).toLocaleString("es-PE")}%`;
+    if (formato === "numero") {
+        const num = Number(valor);
+        if (!Number.isFinite(num)) return valor;
+        return num.toLocaleString("es-PE");
+    }
+    if (formato === "fecha") return fecha(valor);
+    if (formato === "fecha-hora") return fechaHora(valor);
+    return valor;
+};
+
+const Grafico = ({ grafico }) => {
+    const etiquetas = grafico.etiquetas || [];
+    const series = grafico.series || [];
+    if (!etiquetas.length || !series.length) {
+        return (
+            <div className="flex h-full min-h-[280px] items-center justify-center text-sm text-gray-400">
+                Sin datos para graficar
+            </div>
+        );
+    }
+
+    const maximo = Math.max(
+        1,
+        ...series.flatMap((serie) => (serie.valores || []).map((v) => Math.abs(Number(v) || 0)))
+    );
+
+    if (grafico.tipo === "donut") {
+        let acumulado = 0;
+        const total = (series[0]?.valores || []).reduce((s, v) => s + Math.abs(Number(v) || 0), 0) || 1;
+        const radios = [];
+        const size = 180;
+        const r = 70;
+        const circ = 2 * Math.PI * r;
+
+        (series[0]?.valores || []).forEach((valor, i) => {
+            const v = Math.abs(Number(valor) || 0);
+            const ratio = v / total;
+            const dash = ratio * circ;
+            const gap = circ - dash;
+            const offset = circ - acumulado;
+            radios.push({ color: series[0].color || colores[i % colores.length], dash, gap, offset, valor: v });
+            acumulado += dash;
+        });
+
+        return (
+            <div className="flex flex-col items-center gap-6 sm:flex-row sm:justify-between">
+                <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+                    <g transform={`translate(${size / 2}, ${size / 2}) rotate(-90)`}>
+                        <circle r={r} cx="0" cy="0" fill="transparent" stroke="#f1f5f9" strokeWidth="28" />
+                        {radios.map((seg, i) => (
+                            <circle
+                                key={i}
+                                r={r}
+                                cx="0"
+                                cy="0"
+                                fill="transparent"
+                                stroke={seg.color}
+                                strokeWidth="28"
+                                strokeDasharray={`${seg.dash} ${seg.gap}`}
+                                strokeDashoffset={seg.offset}
+                            />
+                        ))}
+                    </g>
+                </svg>
+                <div className="flex w-full flex-col gap-2 sm:max-w-xs">
+                    {(series[0]?.valores || []).map((valor, i) => (
+                        <div key={i} className="flex items-center justify-between text-sm">
+                            <div className="flex items-center gap-2">
+                                <span
+                                    className="h-2.5 w-2.5 rounded-full"
+                                    style={{ backgroundColor: series[0].color || colores[i % colores.length] }}
+                                ></span>
+                                <span className="text-slate-600">{etiquetas[i] || series[0].nombre}</span>
+                            </div>
+                            <span className="font-semibold text-slate-900">
+                                {formatearValor(valor, grafico.formato)}
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+    }
+
+    if (grafico.tipo === "lineas") {
+        const valores = series[0]?.valores || [];
+        const puntos = valores.map((v, i) => {
+            const x = (i / Math.max(1, valores.length - 1)) * 100;
+            const y = 100 - ((Number(v) || 0) / maximo) * 80;
+            return `${x},${y}`;
+        });
+        return (
+            <div>
+                <svg viewBox="0 0 100 100" className="h-64 w-full">
+                    <polyline
+                        fill="none"
+                        stroke={series[0].color || colores[0]}
+                        strokeWidth="2"
+                        points={puntos.join(" ")}
+                    />
+                    {valores.map((v, i) => {
+                        const x = (i / Math.max(1, valores.length - 1)) * 100;
+                        const y = 100 - ((Number(v) || 0) / maximo) * 80;
+                        return <circle key={i} cx={x} cy={y} r="1.6" fill={series[0].color || colores[0]} />;
+                    })}
+                </svg>
+                <div className="mt-3 flex flex-wrap justify-between gap-2 text-xs text-gray-500">
+                    {etiquetas.map((et, i) => (
+                        <span key={i}>{et}</span>
+                    ))}
+                </div>
+            </div>
+        );
+    }
+
+    if (grafico.tipo === "barras-horizontales") {
+        return (
+            <div className="space-y-3">
+                {etiquetas.map((et, idx) => {
+                    const v = Number(series[0]?.valores?.[idx] || 0);
+                    const ancho = maximo ? (Math.abs(v) / maximo) * 100 : 0;
+                    return (
+                        <div key={idx}>
+                            <div className="mb-1 flex items-center justify-between text-sm">
+                                <span className="text-slate-600">{et}</span>
+                                <span className="font-semibold text-slate-900">{formatearValor(v, grafico.formato)}</span>
+                            </div>
+                            <div className="h-2.5 w-full rounded-full bg-slate-100">
+                                <div
+                                    className="h-2.5 rounded-full"
+                                    style={{ width: `${Math.max(4, ancho)}%`, backgroundColor: series[0].color || colores[idx % colores.length] }}
+                                ></div>
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        );
+    }
+
+    return (
+        <div>
+            <svg viewBox="0 0 100 100" className="h-64 w-full">
+                {(series[0]?.valores || []).map((_, i) => (
+                    <line key={i} x1={(i + 1) * 20} y1="10" x2={(i + 1) * 20} y2="90" stroke="#e5e7eb" strokeWidth="0.4" />
+                ))}
+                {series.map((serie, sIdx) => {
+                    const valores = serie.valores || [];
+                    const ancho = 100 / Math.max(1, valores.length);
+                    return valores.map((v, i) => {
+                        const h = maximo ? ((Number(v) || 0) / maximo) * 70 : 0;
+                        const x = i * ancho + ancho * 0.15 + sIdx * (ancho * 0.35);
+                        const w = ancho * 0.35;
+                        return (
+                            <rect
+                                key={`${sIdx}-${i}`}
+                                x={x}
+                                y={90 - h}
+                                width={w}
+                                height={h}
+                                rx="1"
+                                fill={serie.color || colores[sIdx % colores.length]}
+                            />
+                        );
+                    });
+                })}
+            </svg>
+            <div className="mt-3 flex flex-wrap justify-between gap-2 text-xs text-gray-500">
+                {etiquetas.map((et, i) => (
+                    <span key={i}>{et}</span>
+                ))}
+            </div>
+            {series.length > 1 && (
+                <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-slate-600">
+                    {series.map((serie, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: serie.color || colores[i % colores.length] }}></span>
+                            <span>{serie.nombre}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
+
 const Reportes = () => {
-    const [desde, setDesde] = useState(inicioMes());
-    const [hasta, setHasta] = useState(hoy());
+    const [catalogo, setCatalogo] = useState(null);
+    const [reporteId, setReporteId] = useState("resumen");
+    const [filtros, setFiltros] = useState({
+        desde: inicioMes(),
+        hasta: hoy(),
+        periodo: "mes",
+    });
     const [reporte, setReporte] = useState(null);
-    const [cargando, setCargando] = useState(true);
+    const [cargando, setCargando] = useState(false);
+    const [cargandoCatalogo, setCargandoCatalogo] = useState(true);
     const [error, setError] = useState("");
-
-    const cargar = useCallback(async (rango) => {
-        setCargando(true);
-        setError("");
-        try {
-            const data = await obtenerReporte(rango);
-            setReporte(data);
-        } catch (e) {
-            setError(e.message);
-        } finally {
-            setCargando(false);
-        }
-    }, []);
-
-    useEffect(() => {
-        cargar({ desde: inicioMes(), hasta: hoy() });
-    }, [cargar]);
-
-    const consultar = (e) => {
-        e.preventDefault();
-        cargar({ desde, hasta });
-    };
 
     return (
         <div>
@@ -66,28 +257,10 @@ const Reportes = () => {
                     <div>
                         <h2 className="text-xl font-bold text-slate-900">Reportes</h2>
                         <p className="text-sm text-gray-500">
-                            Resumen de ventas, caja, comprobantes, ocupación y auditoría.
+                            Reportes generales, operativos y estadísticos con filtros reales desde Supabase.
                         </p>
                     </div>
                 </div>
-
-                <form onSubmit={consultar} className="flex flex-wrap items-end gap-2">
-                    <label className="block text-xs font-semibold text-slate-700">
-                        Desde
-                        <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className={`${inputClase} mt-1.5 font-normal`} />
-                    </label>
-                    <label className="block text-xs font-semibold text-slate-700">
-                        Hasta
-                        <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className={`${inputClase} mt-1.5 font-normal`} />
-                    </label>
-                    <button
-                        type="submit"
-                        disabled={cargando}
-                        className="rounded-xl bg-blue-800 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-900 disabled:opacity-60"
-                    >
-                        {cargando ? "Consultando..." : "Consultar"}
-                    </button>
-                </form>
             </div>
 
             {error && (

@@ -1,0 +1,151 @@
+﻿601:             valor: opcion(catalogo.tiposMovimiento, filtros.tipoMovimiento) || filtros.tipoMovimiento,
+602:         });
+603:     }
+604:     if (filtros.concepto) aplicados.push({ etiqueta: "Concepto de caja", valor: filtros.concepto });
+605:     if (filtros.caja) {
+606:         aplicados.push({ etiqueta: "Caja", valor: opcion(catalogo.cajas, filtros.caja) || filtros.caja });
+607:     }
+608:     if (filtros.metodoPago) {
+609:         aplicados.push({
+610:             etiqueta: "MÃ©todo de pago",
+611:             valor: opcion(catalogo.metodosPago, filtros.metodoPago) || filtros.metodoPago,
+612:         });
+613:     }
+614:     if (filtros.afectaEfectivo) {
+615:         aplicados.push({
+616:             etiqueta: "Afecta efectivo",
+617:             valor: ETIQUETAS_AFECTA_EFECTIVO[filtros.afectaEfectivo] || filtros.afectaEfectivo,
+618:         });
+619:     }
+620:     if (filtros.accion) aplicados.push({ etiqueta: "AcciÃ³n", valor: filtros.accion });
+621:     if (filtros.tablaAuditada) {
+622:         aplicados.push({ etiqueta: "Tabla auditada", valor: filtros.tablaAuditada });
+623:     }
+624:     if (filtros.agrupacionClientes) {
+625:         aplicados.push({
+626:             etiqueta: "AgrupaciÃ³n",
+627:             valor: filtros.agrupacionClientes === "empresa" ? "Empresa" : "Cliente",
+628:         });
+629:     }
+630: 
+631:     return {
+632:         desde: filtros.desde,
+633:         hasta: filtros.hasta,
+634:         periodo: filtros.periodo,
+635:         filtros: [...aplicados, ...extras],
+636:         generadoEn: new Date().toISOString(),
+637:     };
+638: };
+639: 
+640: const agruparPor = (filas, obtenerClave) => {
+641:     const grupos = new Map();
+642:     filas.forEach((fila) => {
+643:         const clave = obtenerClave(fila);
+644:         if (!grupos.has(clave)) grupos.set(clave, []);
+645:         grupos.get(clave).push(fila);
+646:     });
+647:     return grupos;
+648: };
+649: 
+650: const suma = (filas, obtenerValor) =>
+651:     filas.reduce((total, fila) => total + numero(obtenerValor(fila)), 0);
+652: 
+653: const seriePorPeriodos = (periodos, filas, fechaDe, valorDe) => {
+654:     const indices = new Map(periodos.map((periodo, indice) => [periodo, indice]));
+655:     const valores = periodos.map(() => 0);
+656:     filas.forEach((fila) => {
+657:         const clave = clavePeriodo(fechaDe(fila), "periodo");
+658:         const indice = indices.get(clave);
+659:         if (indice == null) return;
+660:         valores[indice] += numero(valorDe ? valorDe(fila) : 1);
+661:     });
+662:     return valores;
+663: };
+664: 
+665: const seriePeriodos = (periodos, filas, fechaDe, valorDe, periodo) => {
+666:     const indices = new Map(periodos.map((clave, indice) => [clave, indice]));
+667:     const valores = periodos.map(() => 0);
+668:     filas.forEach((fila) => {
+669:         const clave = clavePeriodo(fechaDe(fila), periodo);
+670:         const indice = indices.get(clave);
+671:         if (indice == null) return;
+672:         valores[indice] += numero(valorDe ? valorDe(fila) : 1);
+673:     });
+674:     return valores;
+675: };
+676: 
+677: const datosPeriodos = (filtros) => {
+678:     const claves = generarPeriodos(filtros.desde, filtros.hasta, filtros.periodo);
+679:     return {
+680:         claves,
+681:         etiquetas: claves.map((clave) => etiquetaPeriodo(clave, filtros.periodo)),
+682:     };
+683: };
+684: 
+685: // ------------------------------------------------------------
+686: // REPORTE: RESUMEN EJECUTIVO
+687: // ------------------------------------------------------------
+688: const reporteResumen = async (filtros, catalogo) => {
+689:     const [recepcionesTodas, movimientosBase, ventasBase, comprobantesBase] = await Promise.all([
+690:         cargarRecepciones(),
+691:         cargarMovimientos(filtros),
+692:         cargarVentas(filtros),
+693:         cargarComprobantes(filtros),
+694:     ]);
+695: 
+696:     const recepciones = filtrarRecepciones(recepcionesTodas, filtros, catalogo);
+697:     const idsRecepcion = new Set(recepciones.map((recepcion) => String(recepcion.id_recepcion)));
+698:     const filtrarPorRecepcion = (fila) => {
+699:         if (!filtros.cliente && !filtros.empresa && !filtros.usuario) return true;
+700:         return fila.id_recepcion && idsRecepcion.has(String(fila.id_recepcion));
+701:     };
+702: 
+703:     const movimientos = movimientosBase
+704:         .filter((movimiento) => !filtros.usuario || String(movimiento.id_usuario) === String(filtros.usuario))
+705:         .filter(
+706:             (movimiento) =>
+707:                 !filtros.metodoPago ||
+708:                 String(movimiento.id_metodopago) === String(filtros.metodoPago)
+709:         )
+710:         .filter(filtrarPorRecepcion);
+711: 
+712:     const ventas = ventasBase.filter(filtrarPorRecepcion);
+713:     const comprobantes = comprobantesBase.filter(filtrarPorRecepcion);
+714: 
+715:     const tiposPorId = new Map(
+716:         catalogo.tiposMovimiento.map((tipo) => [String(tipo.id), tipo])
+717:     );
+718:     let ingresosCaja = 0;
+719:     let egresosCaja = 0;
+720:     movimientos.forEach((movimiento) => {
+721:         const signo = tiposPorId.get(String(movimiento.id_tipomovimiento))?.signo || "+";
+722:         if (signo === "-") egresosCaja += numero(movimiento.monto);
+723:         else ingresosCaja += numero(movimiento.monto);
+724:     });
+725: 
+726:     const ventasTotal = suma(ventas, (venta) => venta.total);
+727:     const hospedaje = suma(recepciones, (recepcion) => recepcion.d_inicial);
+728:     const nochesVendidas = suma(recepciones, (recepcion) =>
+729:         nochesEntre(recepcion.f_entrada, recepcion.f_salida)
+730:     );
+731: 
+732:     const habitaciones = catalogo.habitaciones.filter(
+733:         (habitacion) =>
+734:             !filtros.categoriaHabitacion ||
+735:             String(habitacion.categoriaId) === String(filtros.categoriaHabitacion)
+736:     );
+737:     const recepcionesOcupacion = filtrarRecepciones(recepcionesTodas, filtros, catalogo, {
+738:         solapamiento: true,
+739:     }).filter((recepcion) =>
+740:         habitaciones.some(
+741:             (habitacion) => String(habitacion.id) === String(recepcion.id_habitacion)
+742:         )
+743:     );
+744:     const nochesOcupadas = suma(recepcionesOcupacion, (recepcion) =>
+745:         nochesSolapadas(recepcion.f_entrada, recepcion.f_salida, filtros.desde, filtros.hasta)
+746:     );
+747:     const nochesDisponibles = habitaciones.length * rangoDias(filtros.desde, filtros.hasta);
+748:     const tasaOcupacion = porcentaje(nochesOcupadas, nochesDisponibles);
+749: 
+750:     const { claves, etiquetas } = datosPeriodos(filtros);
+751:     const indexes = new Map(claves.map((clave, indice) => [clave, indice]));

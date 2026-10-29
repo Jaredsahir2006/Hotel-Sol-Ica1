@@ -14,11 +14,19 @@ import {
     registrarPago,
 } from "../services/procesosService";
 import { fechaHora, soles } from "../utils/format";
+import { TURNOS_CAJA } from "../utils/caja";
 import Paginacion from "../components/Paginacion";
 import { usePaginacion } from "../hooks/usePaginacion";
 
 const inputClase =
     "w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100";
+
+const fechaLocalISO = () => {
+    const hoy = new Date();
+    const mes = String(hoy.getMonth() + 1).padStart(2, "0");
+    const dia = String(hoy.getDate()).padStart(2, "0");
+    return `${hoy.getFullYear()}-${mes}-${dia}`;
+};
 
 const Pagos = () => {
     const [catalogos, setCatalogos] = useState({ cajas: [], usuarios: [], metodos: [], conceptos: [], tipos: [] });
@@ -30,6 +38,7 @@ const Pagos = () => {
     const [error, setError] = useState("");
     const [toast, setToast] = useState(null);
     const [mostrarApertura, setMostrarApertura] = useState(false);
+    const [aperturaConfirmada, setAperturaConfirmada] = useState(null);
     const [aperturaAnterior, setAperturaAnterior] = useState(null);
     const [consultandoAnterior, setConsultandoAnterior] = useState(false);
     const [turnoCierre, setTurnoCierre] = useState(null);
@@ -62,6 +71,7 @@ const Pagos = () => {
         id_caja: "",
         monto_inicial: "",
         observacion: "",
+        turno: "Mañana",
     });
 
     const avisar = (mensaje, ok = true) => {
@@ -116,6 +126,7 @@ const Pagos = () => {
         conteoMetodos[String(metodoEfectivoArqueo?.clave || metodoEfectivoArqueo?.id_metodopago || "efectivo")] || 0
     );
     const retiroEstimado = Math.max(0, efectivoContadoArqueo - Number(fondoSiguiente || 0));
+    const nombreCajero = usuario?.logeo || usuario?.usuario || usuario?.nombre || "Usuario actual";
 
     const cambiar = (e) => {
         const { name, value } = e.target;
@@ -182,20 +193,28 @@ const Pagos = () => {
 
         setGuardando(true);
         try {
-            await abrirCaja({
+            const apertura = await abrirCaja({
                 id_caja: Number(formApertura.id_caja),
                 id_usuario: usuario?.id_usuario,
                 monto_inicial: montoInicial,
                 observacion: formApertura.observacion,
+                turno: formApertura.turno,
                 saldo_anterior: aperturaAnterior
                     ? aperturaAnterior.saldo_siguiente ?? aperturaAnterior.monto_declarado ?? aperturaAnterior.monto_sistema
                     : null,
             });
-            setFormApertura({ id_caja: "", monto_inicial: "", observacion: "" });
+            const caja = catalogos.cajas.find((item) => String(item.id_caja) === String(formApertura.id_caja));
+            setAperturaConfirmada({
+                ...apertura,
+                caja_nombre: caja?.n_caja || `Caja #${formApertura.id_caja}`,
+                usuario_nombre: nombreCajero,
+                turno_nombre: apertura.turno_nombre || formApertura.turno,
+            });
+            setFormApertura({ id_caja: "", monto_inicial: "", observacion: "", turno: "Mañana" });
             setAperturaAnterior(null);
             setMostrarApertura(false);
             await cargar();
-            avisar("Caja aperturada correctamente.");
+            avisar(`Caja ${apertura.numero_turno} aperturada correctamente.`);
         } catch (errorApertura) {
             avisar(errorApertura.message, false);
         } finally {
@@ -373,6 +392,36 @@ const Pagos = () => {
             {mostrarApertura && (
                 <form onSubmit={abrir} className="mb-6 grid gap-4 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm sm:grid-cols-2">
                     <label className="block text-xs font-semibold text-slate-700">
+                        Fecha
+                        <input
+                            type="date"
+                            value={fechaLocalISO()}
+                            readOnly
+                            className={`${inputClase} mt-1.5 font-normal`}
+                        />
+                    </label>
+                    <label className="block text-xs font-semibold text-slate-700">
+                        Usuario
+                        <input
+                            type="text"
+                            value={nombreCajero}
+                            readOnly
+                            className={`${inputClase} mt-1.5 bg-slate-50 font-normal`}
+                        />
+                    </label>
+                    <label className="block text-xs font-semibold text-slate-700">
+                        Turno *
+                        <select
+                            value={formApertura.turno}
+                            onChange={(e) => setFormApertura((prev) => ({ ...prev, turno: e.target.value }))}
+                            className={`${inputClase} mt-1.5 font-normal`}
+                        >
+                            {TURNOS_CAJA.map((turno) => (
+                                <option key={turno} value={turno}>{turno}</option>
+                            ))}
+                        </select>
+                    </label>
+                    <label className="block text-xs font-semibold text-slate-700">
                         Caja *
                         <select
                             value={formApertura.id_caja}
@@ -450,6 +499,29 @@ const Pagos = () => {
                         </button>
                     </div>
                 </form>
+            )}
+
+            {aperturaConfirmada && (
+                <section
+                    role="status"
+                    className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900"
+                >
+                    <div className="flex items-start gap-3">
+                        <i className="bi bi-check-circle-fill mt-0.5 text-xl text-emerald-600"></i>
+                        <div className="w-full">
+                            <h3 className="font-semibold">Caja abierta correctamente</h3>
+                            <div className="mt-2 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                                <p>Caja: <strong>{aperturaConfirmada.caja_nombre}</strong></p>
+                                <p>Turno: <strong>{aperturaConfirmada.numero_turno}</strong></p>
+                                <p>Jornada: <strong>{aperturaConfirmada.turno_nombre}</strong></p>
+                                <p>Usuario: <strong>{aperturaConfirmada.usuario_nombre}</strong></p>
+                                <p>Fecha: <strong>{fechaHora(aperturaConfirmada.f_apertura)}</strong></p>
+                                <p>Fondo inicial: <strong>{soles(aperturaConfirmada.monto_inicial)}</strong></p>
+                                <p>Estado: <strong>Abierta</strong></p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
             )}
 
             <div className="mb-6 grid gap-4 lg:grid-cols-3">
