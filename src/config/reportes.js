@@ -26,6 +26,7 @@ export const FILTROS = {
         label: "Estado de la reserva",
         opciones: [
             { value: "en_curso", label: "En curso" },
+            { value: "pendiente_checkin", label: "Pendiente de check-in" },
             { value: "proxima", label: "Próxima" },
             { value: "finalizada", label: "Finalizada" },
         ],

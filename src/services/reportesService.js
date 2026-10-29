@@ -3,6 +3,7 @@ import { DATASETS_PERSONALIZADOS, PERIODOS, REPORTES as REPORTES_CONFIG } from "
 import {
     agregarValores,
     clavePeriodo,
+    clasificarEstadoReserva,
     COLORES_REPORTE,
     dentroDeRango,
     etiquetaPeriodo,
@@ -406,12 +407,6 @@ const normalizarFiltros = (filtros = {}) => {
     };
 };
 
-const estadoReserva = (recepcion) => {
-    if (recepcion.f_salidac) return { clave: "finalizada", nombre: "Finalizada" };
-    if (fechaDia(recepcion.f_entrada) > hoyLocal()) return { clave: "proxima", nombre: "Próxima" };
-    return { clave: "en_curso", nombre: "En curso" };
-};
-
 const clienteDeRecepcion = (recepcion, catalogo) =>
     catalogo.clientes.find((cliente) => String(cliente.id) === String(recepcion.id_cliente)) || null;
 
@@ -419,6 +414,21 @@ const habitacionDeRecepcion = (recepcion, catalogo) =>
     catalogo.habitaciones.find(
         (habitacion) => String(habitacion.id) === String(recepcion.id_habitacion)
     ) || null;
+
+const estadoReserva = (recepcion, catalogo) => {
+    const clave = clasificarEstadoReserva(
+        recepcion,
+        habitacionDeRecepcion(recepcion, catalogo)?.estadoNombre,
+        hoyLocal()
+    );
+    const nombres = {
+        en_curso: "En curso",
+        pendiente_checkin: "Pendiente de check-in",
+        proxima: "Próxima",
+        finalizada: "Finalizada",
+    };
+    return { clave, nombre: nombres[clave] };
+};
 
 const filtrarRecepciones = (recepciones, filtros, catalogo, opciones = {}) =>
     recepciones.filter((recepcion) => {
@@ -446,7 +456,7 @@ const filtrarRecepciones = (recepciones, filtros, catalogo, opciones = {}) =>
         ) {
             return false;
         }
-        if (filtros.estadoReserva && estadoReserva(recepcion).clave !== filtros.estadoReserva) {
+        if (filtros.estadoReserva && estadoReserva(recepcion, catalogo).clave !== filtros.estadoReserva) {
             return false;
         }
         if (
@@ -468,7 +478,7 @@ const filaRecepcion = (recepcion, catalogo) => {
         0,
         recepcion.totaldeuda == null ? total - pagado : numero(recepcion.totaldeuda)
     );
-    const estado = estadoReserva(recepcion);
+    const estado = estadoReserva(recepcion, catalogo);
     return {
         id: recepcion.id_recepcion,
         codigo: `#${recepcion.id_recepcion}`,
@@ -538,6 +548,7 @@ const opcion = (lista, id) =>
 
 const ETIQUETAS_ESTADO_RESERVA = {
     en_curso: "En curso",
+    pendiente_checkin: "Pendiente de check-in",
     proxima: "Próxima",
     finalizada: "Finalizada",
 };
@@ -1922,7 +1933,7 @@ export const obtenerCatalogoReportes = async () => {
             estadoHabitacion: { tipo: "select", label: "Estado de habitación", opciones: catalogo.estadosHabitacion.map((e) => ({ value: e.id, label: e.nombre })), vacio: "Todos los estados" },
             categoriaProducto: { tipo: "select", label: "Categoría de producto", opciones: catalogo.categoriasProducto.map((c) => ({ value: c.id, label: c.nombre })), vacio: "Todas las categorías" },
             producto: { tipo: "text", label: "Producto contiene", placeholder: "Ej. cerveza, papas..." },
-            estadoReserva: { tipo: "select", label: "Estado de la reserva", opciones: [{ value: "en_curso", label: "En curso" }, { value: "proxima", label: "Próxima" }, { value: "finalizada", label: "Finalizada" }], vacio: "Todos los estados" },
+            estadoReserva: { tipo: "select", label: "Estado de la reserva", opciones: [{ value: "en_curso", label: "En curso" }, { value: "pendiente_checkin", label: "Pendiente de check-in" }, { value: "proxima", label: "Próxima" }, { value: "finalizada", label: "Finalizada" }], vacio: "Todos los estados" },
             tipoComprobante: { tipo: "select", label: "Tipo de comprobante", opciones: [{ value: "FACTURA", label: "Facturas" }, { value: "BOLETA", label: "Boletas" }], vacio: "Facturas y boletas" },
             tipoMovimiento: { tipo: "select", label: "Tipo de movimiento", opciones: catalogo.tiposMovimiento.map((t) => ({ value: t.id, label: t.nombre })), vacio: "Ingresos y egresos" },
             concepto: { tipo: "select", label: "Concepto de caja", opciones: catalogo.conceptosBase.map((c) => ({ value: c.nombre, label: c.nombre })), vacio: "Todos los conceptos" },

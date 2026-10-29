@@ -56,6 +56,14 @@ export const dentroDeRango = (valor, desde, hasta) => {
     return true;
 };
 
+export const clasificarEstadoReserva = (recepcion, estadoHabitacion, hoy) => {
+    if (recepcion.f_salidac) return "finalizada";
+    if (fechaDia(recepcion.f_entrada) > hoy) return "proxima";
+    return normalizarTexto(estadoHabitacion).includes("ocup")
+        ? "en_curso"
+        : "pendiente_checkin";
+};
+
 export const inicioSemana = (valor) => {
     const dia = fechaDia(valor);
     if (!dia) return "";
