@@ -30,6 +30,13 @@ The backend requires `backend/.env` with valid Supabase settings. To run only
 one service, use `npm run start:backend` or `npm run start:frontend` in the
 project directory.
 
+Factiliza is used to look up DNI and RUC data when creating a person or company,
+and when entering a new person or company in a reservation. Configure
+`FACTILIZA_TOKEN` in `backend/.env` (see `backend/.env.example`); keep this token
+on the backend and do not add it to frontend `REACT_APP_*` variables. The lookup
+only fills the form: review the returned information and save the record
+separately.
+
 The page will reload when you make changes.\
 You may also see any lint errors in the console.
 

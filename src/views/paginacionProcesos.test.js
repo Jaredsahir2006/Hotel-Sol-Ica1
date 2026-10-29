@@ -32,6 +32,7 @@ import {
     registrarCheckOut,
     registrarPago,
 } from "../services/procesosService";
+import { consultarDocumento } from "../services/factilizaService";
 
 jest.mock("../services/procesosService", () => ({
     abrirCaja: jest.fn(),
@@ -59,6 +60,10 @@ jest.mock("../services/procesosService", () => ({
     registrarPago: jest.fn(),
     registrarReserva: jest.fn(),
     listarCatalogosReserva: jest.fn(),
+}));
+
+jest.mock("../services/factilizaService", () => ({
+    consultarDocumento: jest.fn(),
 }));
 
 const crearRecepciones = (cantidad) =>
@@ -103,6 +108,7 @@ const crearPagos = (cantidad) =>
     }));
 
 beforeEach(() => {
+    consultarDocumento.mockReset();
     listarHabitaciones.mockResolvedValue([]);
     listarClientes.mockResolvedValue([]);
     listarRecepciones.mockResolvedValue(crearRecepciones(30));
@@ -337,6 +343,69 @@ test("Reservas busca habitaciones por fechas y huéspedes y permite seleccionarl
     await userEvent.click(screen.getByRole("button", { name: "Seleccionar" }));
     expect(await screen.findByRole("heading", { name: "Nueva reserva" })).toBeInTheDocument();
     expect(screen.getByText(`Habitación 204 · ${entrada} al ${salida} · 3 huésped(es)`)).toBeInTheDocument();
+});
+
+test("Reserva completa los datos de una persona con la consulta DNI de Factiliza", async () => {
+    const entrada = sumarDias(hoy(), 1);
+    buscarDisponibilidadHabitaciones.mockResolvedValue([{
+        id_habitacion: 17,
+        numero: "204",
+        categoria_nombre: "Doble",
+        estado_nombre: "Disponible",
+        precio: 120,
+    }]);
+    consultarDocumento.mockResolvedValue({
+        numero: "12345678",
+        nombres: "María Elena",
+        apellido_paterno: "Quispe",
+        apellido_materno: "Rojas",
+    });
+    render(<Reservas />);
+
+    fireEvent.change(screen.getByLabelText("Fecha de entrada"), { target: { value: entrada } });
+    await userEvent.click(screen.getByRole("button", { name: "Buscar" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Seleccionar" }));
+    await screen.findByRole("button", { name: "Consultar DNI" });
+    await userEvent.type(screen.getByLabelText("DNI del huésped"), "12345678");
+    await userEvent.click(screen.getByRole("button", { name: "Consultar DNI" }));
+
+    await waitFor(() => {
+        expect(consultarDocumento).toHaveBeenCalledWith("dni", "12345678");
+        expect(screen.getByLabelText("Nombres del huésped")).toHaveValue("María Elena");
+        expect(screen.getByLabelText("Apellido paterno")).toHaveValue("Quispe");
+        expect(screen.getByLabelText("Apellido materno")).toHaveValue("Rojas");
+    });
+});
+
+test("Reserva completa los datos de una empresa con la consulta RUC de Factiliza", async () => {
+    const entrada = sumarDias(hoy(), 1);
+    buscarDisponibilidadHabitaciones.mockResolvedValue([{
+        id_habitacion: 17,
+        numero: "204",
+        categoria_nombre: "Doble",
+        estado_nombre: "Disponible",
+        precio: 120,
+    }]);
+    consultarDocumento.mockResolvedValue({
+        numero: "20123456789",
+        nombre_o_razon_social: "Servicios Hotel Sol S.A.C.",
+        direccion: "Av. Principal 123",
+    });
+    render(<Reservas />);
+
+    fireEvent.change(screen.getByLabelText("Fecha de entrada"), { target: { value: entrada } });
+    await userEvent.click(screen.getByRole("button", { name: "Buscar" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Seleccionar" }));
+    await screen.findByRole("button", { name: "Persona natural" });
+    await userEvent.click(screen.getByRole("button", { name: "Empresa" }));
+    await userEvent.type(screen.getByLabelText("RUC de la empresa"), "20123456789");
+    await userEvent.click(screen.getByRole("button", { name: "Consultar RUC" }));
+
+    await waitFor(() => {
+        expect(consultarDocumento).toHaveBeenCalledWith("ruc", "20123456789");
+        expect(screen.getByLabelText("Razón social")).toHaveValue("Servicios Hotel Sol S.A.C.");
+        expect(screen.getByLabelText("Dirección de empresa")).toHaveValue("Av. Principal 123");
+    });
 });
 
 test("reserva una habitación seleccionada con un huésped existente sin cobrar ni hacer check-in", async () => {
