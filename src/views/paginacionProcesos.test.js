@@ -192,6 +192,7 @@ test("reserva una habitación seleccionada con un huésped existente sin cobrar 
             id_persona: 21,
             nombre: "Ana Huamán",
             documento: "12345678",
+            email: "ana@example.com",
         }],
         identidades: [{ id_tipoidentidad: 1, abreviatura: "DNI" }],
         distritos: [{ id_distrito: 5, d_distrito: "Ica" }],
@@ -227,6 +228,9 @@ test("reserva una habitación seleccionada con un huésped existente sin cobrar 
     expect(await screen.findByText("Reserva registrada correctamente")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Huésped: Ana Huamán");
     expect(screen.getByText("Pendiente de check-in")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Preparar correo" }).getAttribute("href"))
+        .toContain("mailto:ana%40example.com");
+    expect(screen.getByRole("button", { name: "Descargar comprobante PDF" })).toBeInTheDocument();
 });
 
 test("muestra un error al guardar si la habitación dejó de estar disponible", async () => {

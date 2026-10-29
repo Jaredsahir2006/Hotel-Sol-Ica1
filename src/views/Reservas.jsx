@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 
 import {
     buscarDisponibilidadHabitaciones,
@@ -7,6 +9,7 @@ import {
 } from "../services/procesosService";
 import { consultarDocumento } from "../services/factilizaService";
 import { fecha, hoy, noches, soles, sumarDias } from "../utils/format";
+import { crearEnlaceCorreoReserva } from "../utils/comprobanteReserva";
 
 const inputClase =
     "w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100";
@@ -227,6 +230,18 @@ const Reservas = ({ onVerReservas }) => {
             setReservaRegistrada({
                 ...reserva,
                 habitacion_numero: habitacionSeleccionada.numero,
+                metodo_pago_nombre: catalogosReserva.metodos.find(
+                    (metodo) => String(metodo.id_metodopago) === String(metodoPagoId)
+                )?.n_metodopago || "",
+                estado_nombre: "Pendiente de check-in",
+                noches: noches(reserva.f_entrada, reserva.f_salida),
+                correo_envio: reserva.cliente_email || (
+                    modoCliente === "existente"
+                        ? catalogosReserva.clientes.find(
+                            (cliente) => String(cliente.id_cliente) === String(clienteId)
+                        )?.email
+                        : tipoCliente === "persona" ? datosPersona.email : ""
+                ) || "",
                 cliente_nombre: reserva.cliente_nombre || (tipoCliente === "empresa"
                     ? datosEmpresa.razon_social
                     : `${datosPersona.nombre} ${datosPersona.ap_paterno} ${datosPersona.ap_materno}`.trim()),
@@ -240,6 +255,55 @@ const Reservas = ({ onVerReservas }) => {
             setGuardandoReserva(false);
         }
     };
+
+    const descargarComprobante = () => {
+        if (!reservaRegistrada) return;
+        const documento = new jsPDF();
+        documento.setFontSize(18);
+        documento.text("HOTEL SOL ICA", 105, 18, { align: "center" });
+        documento.setFontSize(13);
+        documento.text("Comprobante de reserva", 105, 27, { align: "center" });
+        documento.setFontSize(10);
+        documento.text(`Reserva N° ${reservaRegistrada.id_recepcion}`, 14, 38);
+        documento.text(`Estado: ${reservaRegistrada.estado_nombre}`, 14, 44);
+        autoTable(documento, {
+            startY: 52,
+            head: [["Detalle", "Información"]],
+            body: [
+                ["Huésped / razón social", reservaRegistrada.cliente_nombre || "-"],
+                ["Documento", reservaRegistrada.cliente_documento || "-"],
+                ["Habitación", String(reservaRegistrada.habitacion_numero || "-")],
+                ["Entrada", fecha(reservaRegistrada.f_entrada)],
+                ["Salida", fecha(reservaRegistrada.f_salida)],
+                ["Duración", `${reservaRegistrada.noches} noche(s)`],
+                ["Huéspedes", String(reservaRegistrada.huespedes)],
+                ["Método de pago previsto", reservaRegistrada.metodo_pago_nombre || "-"],
+                ["Total reservado", soles(reservaRegistrada.d_inicial)],
+                ["Adelanto registrado", soles(reservaRegistrada.adelanto)],
+                ["Saldo pendiente", soles(reservaRegistrada.totaldeuda)],
+            ],
+            theme: "grid",
+            headStyles: { fillColor: [30, 64, 175] },
+            styles: { fontSize: 10, cellPadding: 3 },
+        });
+        const finalY = documento.lastAutoTable?.finalY || 60;
+        documento.setFontSize(9);
+        documento.text(
+            "Este documento confirma una reserva pendiente de check-in; no es una factura, boleta ni comprobante de pago.",
+            14,
+            finalY + 10,
+            { maxWidth: 180 }
+        );
+        documento.text("Hotel Sol Ica", 14, finalY + 22);
+        documento.save(`reserva-${reservaRegistrada.id_recepcion}.pdf`);
+    };
+
+    const correoReservaValido = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+        String(reservaRegistrada?.correo_envio || "").trim()
+    );
+    const enlaceCorreoReserva = reservaRegistrada && correoReservaValido
+        ? crearEnlaceCorreoReserva(reservaRegistrada, reservaRegistrada.correo_envio)
+        : undefined;
 
     const cambiarEntrada = (e) => {
         const entrada = e.target.value;
@@ -777,13 +841,26 @@ const Reservas = ({ onVerReservas }) => {
                             <div className="mt-3 grid gap-x-8 gap-y-1 text-sm sm:grid-cols-2">
                                 <p>Número: <strong>#{reservaRegistrada.id_recepcion}</strong></p>
                                 <p>Huésped: <strong>{reservaRegistrada.cliente_nombre}</strong></p>
+                                <p>Documento: <strong>{reservaRegistrada.cliente_documento || "—"}</strong></p>
                                 <p>Habitación: <strong>{reservaRegistrada.habitacion_numero}</strong></p>
-                                <p>Estadía: <strong>{fecha(fEntrada)} – {fecha(fSalida)}</strong></p>
+                                <p>
+                                    Estadía: <strong>{fecha(reservaRegistrada.f_entrada)} – {fecha(reservaRegistrada.f_salida)} · {reservaRegistrada.noches} noche(s)</strong>
+                                </p>
+                                <p>Huéspedes: <strong>{reservaRegistrada.huespedes}</strong></p>
                                 <p>Total reservado: <strong>{soles(reservaRegistrada.d_inicial)}</strong></p>
-                                <p>Estado: <strong>Pendiente de check-in</strong></p>
+                                <p>Método previsto: <strong>{reservaRegistrada.metodo_pago_nombre || "—"}</strong></p>
+                                <p>Estado: <strong>{reservaRegistrada.estado_nombre}</strong></p>
                             </div>
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
+                            <button
+                                type="button"
+                                onClick={descargarComprobante}
+                                className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800"
+                            >
+                                <i className="bi bi-file-earmark-pdf mr-2"></i>
+                                Descargar comprobante PDF
+                            </button>
                             {onVerReservas && (
                                 <button
                                     type="button"
@@ -804,6 +881,40 @@ const Reservas = ({ onVerReservas }) => {
                                 Nueva búsqueda
                             </button>
                         </div>
+                    </div>
+                    <div className="mt-5 border-t border-emerald-200 pt-4">
+                        <label className="block max-w-lg text-sm font-semibold text-emerald-950">
+                            Correo del destinatario
+                            <input
+                                type="email"
+                                value={reservaRegistrada.correo_envio || ""}
+                                onChange={(event) => setReservaRegistrada((reserva) => ({
+                                    ...reserva,
+                                    correo_envio: event.target.value,
+                                }))}
+                                placeholder="huésped@correo.com"
+                                className={`${inputClase} mt-1.5`}
+                            />
+                        </label>
+                        <a
+                            href={enlaceCorreoReserva}
+                            aria-disabled={!correoReservaValido}
+                            onClick={(event) => {
+                                if (!correoReservaValido) event.preventDefault();
+                            }}
+                            className={`mt-3 inline-flex rounded-xl px-4 py-2 text-sm font-semibold ${
+                                correoReservaValido
+                                    ? "bg-white text-emerald-800 hover:bg-emerald-100"
+                                    : "cursor-not-allowed bg-emerald-100 text-emerald-500"
+                            }`}
+                        >
+                            <i className="bi bi-envelope mr-2"></i>
+                            Preparar correo
+                        </a>
+                        <p className="mt-2 text-xs text-emerald-800">
+                            Se abrirá un borrador en tu aplicación de correo con el resumen. Descarga el PDF y adjúntalo manualmente;
+                            el sistema no envía correos ni guarda este destinatario. La reserva no es una factura ni un comprobante de pago.
+                        </p>
                     </div>
                 </section>
             )}

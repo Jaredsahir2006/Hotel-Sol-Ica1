@@ -156,6 +156,7 @@ export const listarClientes = async () => {
             empresa,
             nombre: persona ? nombrePersona(persona) : `Cliente #${c.id_cliente}`,
             documento: persona?.n_documento || empresa?.ruc || "",
+            email: persona?.email || "",
         };
     });
 };
@@ -394,6 +395,7 @@ export const registrarReserva = async ({
         huespedes: huespedesTotal,
         cliente_nombre: clienteDetalle?.nombre || "",
         cliente_documento: documentoReserva || "",
+        cliente_email: clienteDetalle?.email || persona?.email || "",
     };
 };
 
