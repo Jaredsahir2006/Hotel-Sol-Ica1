@@ -1,10 +1,17 @@
 import { API_URL } from "../config/api";
+import { obtenerTokenSesion } from "./authSession";
 
 export const consultarDocumento = async (tipo, numero) => {
+    const token = obtenerTokenSesion();
+    if (!token) {
+        throw new Error("Inicia sesión para consultar documentos.");
+    }
+
     const response = await fetch(`${API_URL}/consultas/${tipo}`, {
         method: "POST",
         headers: {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({ numero })
     });

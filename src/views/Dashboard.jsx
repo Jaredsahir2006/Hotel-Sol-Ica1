@@ -13,6 +13,42 @@ import Facturacion from "./Facturacion";
 import Reportes from "./Reportes";
 import Consumos from "./Consumos";
 import HistorialTrazabilidad from "./HistorialTrazabilidad";
+import { cerrarSesion as limpiarSesion, obtenerSesion } from "../services/authSession";
+
+const MODULO_POR_VISTA = {
+    checkinout: "RECEPCION",
+    reservas: "RECEPCION",
+    reservas_lista: "RECEPCION",
+    consumos: "RECEPCION",
+    huespedes: "CLIENTES",
+    habitaciones: "HABITACIONES",
+    servicios: "HABITACIONES",
+    limpieza: "HABITACIONES",
+    cochera: "HABITACIONES",
+    pagos: "CAJA",
+    apertura_caja: "CAJA",
+    movimiento_caja: "CAJA",
+    caja: "CAJA",
+    concepto_caja: "CAJA",
+    tipo_movimiento_caja: "CAJA",
+    facturacion: "VENTAS",
+    venta: "VENTAS",
+    detalle_venta: "VENTAS",
+    factura: "VENTAS",
+    boleta: "VENTAS",
+    reportes: "REPORTES",
+    auditoria: "REPORTES",
+    empresa: "CLIENTES",
+    empleados: "USUARIOS",
+    departamento: "USUARIOS",
+    provincia: "USUARIOS",
+    tipo_usuario: "USUARIOS",
+    modulo: "USUARIOS",
+    rol: "USUARIOS",
+    rol_permiso: "USUARIOS",
+    usuario_rol: "USUARIOS",
+    usuarios: "USUARIOS"
+};
 
 const MENU_CATEGORIAS = [
     {
@@ -107,18 +143,31 @@ const Dashboard = () => {
         principal: true,
     });
 
-    // Recuperar usuario autenticado
-    const usuarioGuardado =
-        sessionStorage.getItem("usuario");
+    const sesion = obtenerSesion();
+    const usuario = sesion?.usuario || null;
+    const modulosPermitidos = new Set(
+        (sesion?.modulos || []).map((modulo) => modulo.toUpperCase())
+    );
+    const rolesUsuario = new Set(
+        (sesion?.roles || []).map((rol) => rol.toUpperCase())
+    );
+    const puedeAcceder = (clave) => {
+        const modulo = MODULO_POR_VISTA[clave];
+        if (!modulo || !modulosPermitidos.has(modulo)) {
+            return false;
+        }
 
-    const usuario = usuarioGuardado
-        ? JSON.parse(usuarioGuardado)
-        : null;
+        return modulo !== "USUARIOS" || rolesUsuario.has("ADMINISTRADOR");
+    };
 
     // Vista actual: "dashboard" o la clave de un CRUD (ver config/entidades.js)
     const [vista, setVista] = useState("dashboard");
 
     const abrirVista = (clave) => {
+        if (clave !== "dashboard" && !puedeAcceder(clave)) {
+            return;
+        }
+
         setVista(clave);
         setSidebarOpen(false);
 
@@ -178,7 +227,7 @@ const Dashboard = () => {
 
     const cerrarSesion = () => {
 
-        sessionStorage.removeItem("usuario");
+        limpiarSesion();
 
         navigate("/login", {
             replace: true
@@ -310,6 +359,13 @@ const Dashboard = () => {
                         </button>
 
                         {MENU_CATEGORIAS.map((categoria) => {
+                            const opcionesPermitidas = categoria.opciones.filter(
+                                (opcion) => puedeAcceder(opcion.clave)
+                            );
+                            if (opcionesPermitidas.length === 0) {
+                                return null;
+                            }
+
                             const abierta = Boolean(categoriasAbiertas[categoria.clave]);
                             const contenidoId = `menu-${categoria.clave}`;
 
@@ -343,7 +399,7 @@ const Dashboard = () => {
                                             aria-label={categoria.nombre}
                                             className="ml-3 mt-1 space-y-1 border-l border-white/10 pl-2"
                                         >
-                                            {categoria.opciones.map((opcion) => (
+                                            {opcionesPermitidas.map((opcion) => (
                                                 <button
                                                     key={opcion.clave}
                                                     type="button"
@@ -393,12 +449,9 @@ const Dashboard = () => {
                             </p>
 
                             <p className="text-xs text-slate-400">
-                               <span>
-                                   Usuario tipo
-                               </span> 
-                               <span>
-                                   {usuario.id_tipousuario}
-                               </span>
+                                {sesion.roles?.length
+                                    ? sesion.roles.join(", ")
+                                    : "Sin rol asignado"}
                             </p>
 
                         </div>
@@ -542,26 +595,32 @@ const Dashboard = () => {
 
                 <main className="p-5 sm:p-8">
 
-                    {vista === "checkinout" && <CheckInOut />}
+                    {vista === "checkinout" && puedeAcceder(vista) && <CheckInOut />}
 
-                    {vista === "reservas" && <Reservas onVerReservas={() => abrirVista("reservas_lista")} />}
+                    {vista === "reservas" && puedeAcceder(vista) && <Reservas onVerReservas={() => abrirVista("reservas_lista")} />}
 
-                    {vista === "consumos" && <Consumos />}
+                    {vista === "consumos" && puedeAcceder(vista) && <Consumos />}
 
-                    {vista === "pagos" && <Pagos />}
+                    {vista === "pagos" && puedeAcceder(vista) && <Pagos />}
 
-                    {vista === "facturacion" && <Facturacion />}
+                    {vista === "facturacion" && puedeAcceder(vista) && <Facturacion />}
 
-                    {vista === "reportes" && <Reportes />}
+                    {vista === "reportes" && puedeAcceder(vista) && <Reportes />}
 
-                    {vista === "auditoria" && <HistorialTrazabilidad />}
+                    {vista === "auditoria" && puedeAcceder(vista) && <HistorialTrazabilidad />}
 
-                    {vista !== "dashboard" && vista !== "auditoria" && ENTIDADES[vista] && (
+                    {vista !== "dashboard" && vista !== "auditoria" && puedeAcceder(vista) && ENTIDADES[vista] && (
                         <CrudModule key={vista} entidadKey={vista} />
                     )}
 
-                    {vista === "reservas_lista" && (
+                    {vista === "reservas_lista" && puedeAcceder(vista) && (
                         <CrudModule key="reservas" entidadKey="reservas" />
+                    )}
+
+                    {vista === "usuarios" && puedeAcceder(vista) && (
+                        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
+                            La administración directa de cuentas y contraseñas no está habilitada en el CRUD genérico para evitar exponer credenciales. Para asignar permisos, utiliza “Roles de usuarios”.
+                        </section>
                     )}
 
                     {vista === "dashboard" && (
@@ -931,7 +990,7 @@ const Dashboard = () => {
 
                         <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
 
-                            {modulos.map((modulo) => (
+                            {modulos.filter((modulo) => puedeAcceder(modulo.clave)).map((modulo) => (
 
                                 <button
                                     key={modulo.nombre}
@@ -977,6 +1036,12 @@ const Dashboard = () => {
                                 </button>
 
                             ))}
+
+                            {modulosPermitidos.size === 0 && (
+                                <p className="text-sm text-slate-500">
+                                    Tu usuario no tiene módulos habilitados. Solicita acceso al administrador.
+                                </p>
+                            )}
 
                         </div>
 

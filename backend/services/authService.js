@@ -1,6 +1,8 @@
 const {
     buscarUsuarioPorLogeo
 } = require("../models/usuarioModel");
+const { obtenerPermisosUsuario } = require("../models/permisosModel");
+const { crearTokenSesion } = require("../utils/sessionToken");
 
 const autenticarUsuario = async (logeo, clave) => {
 
@@ -36,15 +38,26 @@ const autenticarUsuario = async (logeo, clave) => {
         };
     }
 
+    const permisos = await obtenerPermisosUsuario(usuario.id_usuario);
+    const datosUsuario = {
+        id_usuario: usuario.id_usuario,
+        id_tipousuario: usuario.id_tipousuario,
+        id_empleado: usuario.id_empleado,
+        logeo: usuario.logeo,
+        estado: usuario.estado
+    };
+    const sesion = crearTokenSesion({
+        usuario: datosUsuario,
+        ...permisos
+    });
+
     return {
         success: true,
-        usuario: {
-            id_usuario: usuario.id_usuario,
-            id_tipousuario: usuario.id_tipousuario,
-            id_empleado: usuario.id_empleado,
-            logeo: usuario.logeo,
-            estado: usuario.estado
-        }
+        usuario: datosUsuario,
+        roles: permisos.roles,
+        modulos: permisos.modulos,
+        token: sesion.token,
+        expiraEn: sesion.expiraEn
     };
 };
 

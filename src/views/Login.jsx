@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import HotelLogo from "../components/HotelLogo";
@@ -8,11 +8,18 @@ import {
     validarLogin,
     ejecutarLogin
 } from "../controllers/authController";
+import { guardarSesion, obtenerSesion } from "../services/authSession";
 
 
 const Login = () => {
 
     const navigate = useNavigate();
+
+    useEffect(() => {
+        if (obtenerSesion()) {
+            navigate("/dashboard", { replace: true });
+        }
+    }, [navigate]);
 
     const [formData, setFormData] = useState({
         logeo: "",
@@ -29,6 +36,8 @@ const Login = () => {
 
     const [loginSuccess, setLoginSuccess] =
         useState(false);
+    const [recordarme, setRecordarme] = useState(false);
+    const [mensajeInformativo, setMensajeInformativo] = useState("");
 
 
     const handleChange = (event) => {
@@ -49,6 +58,7 @@ const Login = () => {
             general: ""
         }));
 
+        setMensajeInformativo("");
         setLoginSuccess(false);
     };
 
@@ -58,6 +68,7 @@ const Login = () => {
         event.preventDefault();
 
         setLoginSuccess(false);
+        setMensajeInformativo("");
 
         const validacion =
             validarLogin(
@@ -103,20 +114,14 @@ const Login = () => {
         }
 
 
-        // Guardamos temporalmente los datos
-        // básicos del usuario.
-        sessionStorage.setItem(
-            "usuario",
-            JSON.stringify(
-                resultado.usuario
-            )
-        );
-
-
-        sessionStorage.setItem(
-            "usuario",
-            JSON.stringify(resultado.usuario)
-        );
+        try {
+            guardarSesion(resultado, recordarme);
+        } catch (error) {
+            setErrors({
+                general: error.message || "No se pudo guardar la sesión."
+            });
+            return;
+        }
 
         navigate("/dashboard", {
             replace: true
@@ -521,6 +526,15 @@ const Login = () => {
 
                         )}
 
+                        {mensajeInformativo && (
+                            <p
+                                role="status"
+                                className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800"
+                            >
+                                {mensajeInformativo}
+                            </p>
+                        )}
+
 
 
                         {/* Éxito */}
@@ -651,6 +665,10 @@ const Login = () => {
                                             border-gray-300
                                             text-blue-700
                                         "
+                                        checked={recordarme}
+                                        onChange={(event) =>
+                                            setRecordarme(event.target.checked)
+                                        }
                                     />
 
                                   <span>
@@ -667,8 +685,8 @@ const Login = () => {
                                         text-blue-800
                                     "
                                     onClick={() =>
-                                        alert(
-                                            "La recuperación de contraseña estará disponible próximamente."
+                                        setMensajeInformativo(
+                                            "Contacta al administrador del sistema para restablecer tu contraseña. La recuperación automática aún no está configurada."
                                         )
                                     }
                                 >

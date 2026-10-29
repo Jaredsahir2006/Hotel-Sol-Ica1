@@ -3,6 +3,7 @@ const express = require("express");
 const {
     consultarDocumento
 } = require("../controllers/consultasController");
+const requireAuth = require("../middleware/requireAuth");
 
 const router = express.Router();
 const ventanasPorIp = new Map();
@@ -32,6 +33,7 @@ router.use((req, res, next) => {
     return next();
 });
 
+router.use(requireAuth);
 router.post("/:tipo", consultarDocumento);
 
 module.exports = router;

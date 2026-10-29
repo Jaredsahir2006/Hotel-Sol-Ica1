@@ -30,6 +30,20 @@ The backend requires `backend/.env` with valid Supabase settings. To run only
 one service, use `npm run start:backend` or `npm run start:frontend` in the
 project directory.
 
+The backend signs login sessions for eight hours. In production,
+`backend/.env` must define a long, random `SESSION_SECRET` that is stable across
+backend restarts and instances. The login loads each user's active roles and
+granted modules from the existing RBAC tables; “Remember me” stores the
+session persistently only for its remaining eight-hour lifetime.
+
+The login and application navigation use the active roles and module grants
+stored in the existing RBAC tables. Supabase data queries continue using the
+project's existing publishable-key connection so the current hotel workflows
+keep working without a new server secret. This protects the application
+interface, but does not stop someone from calling Supabase directly if the
+current anonymous/RLS policies allow it. Database-level protection requires
+reviewing those policies; no Supabase tables or columns are added here.
+
 Factiliza is used to look up DNI and RUC data when creating a person or company,
 and when entering a new person or company in a reservation. Configure
 `FACTILIZA_TOKEN` in `backend/.env` (see `backend/.env.example`); keep this token
