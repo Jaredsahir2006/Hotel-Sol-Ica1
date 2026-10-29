@@ -12,6 +12,7 @@ import Pagos from "./Pagos";
 import Facturacion from "./Facturacion";
 import Reportes from "./Reportes";
 import Consumos from "./Consumos";
+import HistorialTrazabilidad from "./HistorialTrazabilidad";
 
 const MENU_CATEGORIAS = [
     {
@@ -64,11 +65,11 @@ const MENU_CATEGORIAS = [
     },
     {
         clave: "reportes",
-        nombre: "Reportes",
+        nombre: "Reportes y auditoría",
         icono: "bi-bar-chart",
         opciones: [
             { clave: "reportes", nombre: "Reportes", icono: "bi-bar-chart" },
-            { clave: "auditoria", nombre: "Auditoría", icono: "bi-clock-history" },
+            { clave: "auditoria", nombre: "Historial y trazabilidad", icono: "bi-clock-history" },
         ],
     },
     {
@@ -553,7 +554,9 @@ const Dashboard = () => {
 
                     {vista === "reportes" && <Reportes />}
 
-                    {vista !== "dashboard" && ENTIDADES[vista] && (
+                    {vista === "auditoria" && <HistorialTrazabilidad />}
+
+                    {vista !== "dashboard" && vista !== "auditoria" && ENTIDADES[vista] && (
                         <CrudModule key={vista} entidadKey={vista} />
                     )}
 
