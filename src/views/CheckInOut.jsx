@@ -3,6 +3,7 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 
 import {
+    listarAperturasAbiertas,
     listarCatalogosPago,
     listarClientes,
     listarHabitaciones,
@@ -24,7 +25,13 @@ const CheckInOut = () => {
     const [habitaciones, setHabitaciones] = useState([]);
     const [clientes, setClientes] = useState([]);
     const [recepciones, setRecepciones] = useState([]);
-    const [catalogos, setCatalogos] = useState({ usuarios: [], metodos: [] });
+    const [catalogos, setCatalogos] = useState({
+        usuarios: [],
+        metodos: [],
+        conceptos: [],
+        tipos: [],
+    });
+    const [aperturasAbiertas, setAperturasAbiertas] = useState([]);
     const [cargando, setCargando] = useState(true);
     const [guardando, setGuardando] = useState(false);
     const [error, setError] = useState("");
@@ -49,6 +56,8 @@ const CheckInOut = () => {
         id_habitacion: "",
         id_usuario: usuario?.id_usuario || "",
         id_metodopago: "",
+        id_aperturacaja: "",
+        id_concepto: "",
         f_entrada: hoy(),
         f_salida: sumarDias(hoy(), 1),
         d_inicial: "",
@@ -66,16 +75,18 @@ const CheckInOut = () => {
         setCargando(true);
         setError("");
         try {
-            const [h, c, r, cat] = await Promise.all([
+            const [h, c, r, cat, aperturas] = await Promise.all([
                 listarHabitaciones(),
                 listarClientes(),
                 listarRecepciones(),
                 listarCatalogosPago(),
+                listarAperturasAbiertas(),
             ]);
             setHabitaciones(h);
             setClientes(c);
             setRecepciones(r);
             setCatalogos(cat);
+            setAperturasAbiertas(aperturas);
         } catch (e) {
             setError(e.message);
         } finally {
@@ -89,6 +100,13 @@ const CheckInOut = () => {
 
     const disponibles = habitaciones.filter((h) =>
         String(h.estado_nombre || "").toUpperCase().includes("DISPON")
+    );
+    const conceptosIngreso = catalogos.conceptos.filter((concepto) =>
+        catalogos.tipos.some(
+            (tipo) =>
+                String(tipo.id_tipomovimiento) === String(concepto.id_tipomovimiento)
+                && tipo.signo === "+"
+        )
     );
 
     const habitacionSeleccionada = habitaciones.find(
@@ -132,6 +150,8 @@ const CheckInOut = () => {
             id_habitacion: "",
             id_usuario: usuario?.id_usuario || "",
             id_metodopago: "",
+            id_aperturacaja: "",
+            id_concepto: "",
             f_entrada: hoy(),
             f_salida: sumarDias(hoy(), 1),
             d_inicial: "",
@@ -149,6 +169,16 @@ const CheckInOut = () => {
             avisar("Completa cliente, habitación, usuario y método de pago.", false);
             return;
         }
+        const adelanto = Number(form.adelanto) || 0;
+        const total = Number(form.d_inicial || totalEstimado);
+        if (adelanto < 0 || adelanto > total) {
+            avisar("El adelanto debe ser válido y no puede superar el total de la estadía.", false);
+            return;
+        }
+        if (adelanto > 0 && (!form.id_aperturacaja || !form.id_concepto)) {
+            avisar("Para registrar un adelanto, selecciona una caja abierta y un concepto de ingreso.", false);
+            return;
+        }
         if (nochesEstadia <= 0) {
             avisar("La fecha de salida debe ser posterior a la de entrada.", false);
             return;
@@ -158,14 +188,19 @@ const CheckInOut = () => {
         try {
             await registrarCheckIn({
                 ...form,
-                d_inicial: Number(form.d_inicial || totalEstimado),
-                adelanto: Number(form.adelanto) || 0,
+                d_inicial: total,
+                adelanto,
             });
             await cargar();
             limpiar();
             setFormAbierto(false);
             avisar("Check-in registrado correctamente.");
         } catch (errorGuardar) {
+            if (errorGuardar.procesoParcial) {
+                await cargar();
+                limpiar();
+                setFormAbierto(false);
+            }
             avisar(errorGuardar.message, false);
         } finally {
             setGuardando(false);
@@ -189,6 +224,12 @@ const CheckInOut = () => {
             setConsumosCheckout([]);
             avisar("Check-out registrado. La habitación quedó disponible.");
         } catch (errorCheckOut) {
+            if (errorCheckOut.procesoParcial) {
+                await cargar();
+                consultaConsumosActual.current += 1;
+                setRecepcionCheckout(null);
+                setConsumosCheckout([]);
+            }
             avisar(errorCheckOut.message, false);
         } finally {
             setGuardando(false);
@@ -388,7 +429,42 @@ const CheckInOut = () => {
                         <label className="block text-xs font-semibold text-slate-700">
                             Adelanto (S/)
                             <input type="number" min="0" step="0.01" name="adelanto" value={form.adelanto} onChange={cambiar} className={`${inputClase} mt-1.5 font-normal`} />
+                            <span className="mt-1 block font-normal text-gray-400">
+                                Si registras un adelanto, el sistema lo asociará a una caja abierta y actualizará el saldo y el movimiento de caja.
+                            </span>
                         </label>
+
+                        {Number(form.adelanto) > 0 && (
+                            <>
+                                <label className="block text-xs font-semibold text-slate-700">
+                                    Caja abierta para el cobro *
+                                    <select name="id_aperturacaja" value={form.id_aperturacaja} onChange={cambiar} className={`${inputClase} mt-1.5 font-normal`}>
+                                        <option value="">-- Seleccione --</option>
+                                        {aperturasAbiertas.map((apertura) => (
+                                            <option key={apertura.id_aperturacaja} value={apertura.id_aperturacaja}>
+                                                {apertura.caja_nombre} · {apertura.numero_turno}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    {aperturasAbiertas.length === 0 && (
+                                        <span className="mt-1 block font-normal text-amber-700">
+                                            No hay cajas abiertas. Abre una desde Pagos y caja para registrar el adelanto.
+                                        </span>
+                                    )}
+                                </label>
+                                <label className="block text-xs font-semibold text-slate-700">
+                                    Concepto de ingreso *
+                                    <select name="id_concepto" value={form.id_concepto} onChange={cambiar} className={`${inputClase} mt-1.5 font-normal`}>
+                                        <option value="">-- Seleccione --</option>
+                                        {conceptosIngreso.map((concepto) => (
+                                            <option key={concepto.id_concepto} value={concepto.id_concepto}>
+                                                {concepto.n_concepto}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                            </>
+                        )}
 
                         <label className="block text-xs font-semibold text-slate-700">
                             Comprobante

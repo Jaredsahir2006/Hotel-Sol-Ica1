@@ -10,6 +10,7 @@ import {
     eliminar
 } from "../services/crudService";
 import { consultarDocumento } from "../services/factilizaService";
+import { invalidarCatalogosReportes } from "../services/reportesService";
 
 // Módulo CRUD genérico: sirve para cualquier entidad de config/entidades.js
 const CrudModule = ({ entidadKey }) => {
@@ -284,6 +285,7 @@ const CrudModule = ({ entidadKey }) => {
         setGuardando(true);
         try {
             await accion();
+            invalidarCatalogosReportes();
             avisar(mensajeOk);
             cerrarForm();
             const r = await cargarPagina();   // refresco de la página actual

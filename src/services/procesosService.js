@@ -2,6 +2,7 @@ import { supabase } from "../config/supabase";
 import { calcularTotalesEfectivo, calcularTotalesPorMetodo, TURNOS_CAJA } from "../utils/caja";
 import { calcularSaldoPendiente } from "../utils/comprobantePago";
 import { buscarHabitacionesDisponibles } from "../utils/disponibilidad";
+import { invalidarCatalogosReportes } from "./reportesService";
 
 // ============================================================
 // Servicios de los procesos operativos:
@@ -83,6 +84,9 @@ const actualizarFila = async (tabla, pk, id, fila) => {
     lanzar(error);
     return data;
 };
+
+const darBajaFila = async (tabla, pk, id) =>
+    actualizarFila(tabla, pk, id, { estado: "0" });
 
 const nombrePersona = (p) =>
     p ? `${p.nombre || ""} ${p.ap_paterno || ""} ${p.ap_materno || ""}`.replace(/\s+/g, " ").trim() : "";
@@ -308,23 +312,50 @@ export const registrarConsumo = async ({ id_recepcion, items }) => {
     if (total <= 0) throw new Error("El total del consumo debe ser mayor a cero.");
 
     const venta = await insertarFila("venta", { id_recepcion: recepcionId, total });
-    const { error: errorDetalles } = await supabase.from("detalle_venta").insert(
-        detalles.map((detalle) => auditar({ ...detalle, id_venta: venta.id_venta }))
-    );
-    lanzar(errorDetalles);
+    try {
+        const { error: errorDetalles } = await supabase.from("detalle_venta").insert(
+            detalles.map((detalle) => auditar({ ...detalle, id_venta: venta.id_venta }))
+        );
+        lanzar(errorDetalles);
 
-    const nuevoAdicional = Math.round(((Number(recepcion.d_asistente) || 0) + total) * 100) / 100;
-    const pagado = Number(recepcion.t_pagado) || 0;
-    const totalDeuda = Math.max(
-        0,
-        Math.round(((Number(recepcion.d_inicial) || 0) + nuevoAdicional - pagado) * 100) / 100
-    );
-    const actualizada = await actualizarFila("recepcion", "id_recepcion", recepcionId, {
-        d_asistente: nuevoAdicional,
-        totaldeuda: totalDeuda,
-    });
+        const nuevoAdicional = Math.round(((Number(recepcion.d_asistente) || 0) + total) * 100) / 100;
+        const pagado = Number(recepcion.t_pagado) || 0;
+        const totalDeuda = Math.max(
+            0,
+            Math.round(((Number(recepcion.d_inicial) || 0) + nuevoAdicional - pagado) * 100) / 100
+        );
+        const actualizada = await actualizarFila("recepcion", "id_recepcion", recepcionId, {
+            d_asistente: nuevoAdicional,
+            totaldeuda: totalDeuda,
+        });
 
-    return { venta, detalles, total, recepcion: actualizada };
+        return { venta, detalles, total, recepcion: actualizada };
+    } catch (errorRegistro) {
+        const erroresReversion = [];
+        try {
+            const { error } = await supabase
+                .from("detalle_venta")
+                .update(auditar({ estado: "0" }, false))
+                .eq("id_venta", venta.id_venta)
+                .eq("estado", "1");
+            lanzar(error);
+        } catch (errorDetalle) {
+            erroresReversion.push(errorDetalle.message);
+        }
+        try {
+            await darBajaFila("venta", "id_venta", venta.id_venta);
+        } catch (errorVenta) {
+            erroresReversion.push(errorVenta.message);
+        }
+        if (erroresReversion.length) {
+            const errorParcial = new Error(
+                `No se completó el consumo y el sistema no pudo revertir todos sus registros. No repitas la operación; solicita revisión desde el sistema. Error: ${errorRegistro.message}; reversión: ${erroresReversion.join(" | ")}`
+            );
+            errorParcial.procesoParcial = true;
+            throw errorParcial;
+        }
+        throw errorRegistro;
+    }
 };
 
 export const buscarDisponibilidadHabitaciones = async ({ f_entrada, f_salida }) => {
@@ -518,6 +549,7 @@ export const registrarReserva = async ({
         f_salidac: null,
     });
 
+    invalidarCatalogosReportes();
     return {
         ...reserva,
         huespedes: huespedesTotal,
@@ -532,6 +564,8 @@ export const registrarCheckIn = async ({
     id_habitacion,
     id_usuario,
     id_metodopago,
+    id_aperturacaja,
+    id_concepto,
     f_entrada,
     f_salida,
     d_inicial,
@@ -539,36 +573,139 @@ export const registrarCheckIn = async ({
     tipodocumento,
     documento,
 }) => {
-    const total = Number(d_inicial) || 0;
-    const pagado = Number(adelanto) || 0;
+    const clienteId = Number(id_cliente);
+    const habitacionId = Number(id_habitacion);
+    const usuarioId = Number(id_usuario || usuarioActualId());
+    const metodoId = Number(id_metodopago);
+    const total = Number(d_inicial);
+    const pagado = Number(adelanto || 0);
+    if (![clienteId, habitacionId, usuarioId, metodoId].every((id) => Number.isInteger(id) && id > 0)) {
+        throw new Error("Selecciona un huésped, habitación, usuario y método de pago válidos.");
+    }
+    if (!Number.isFinite(total) || total < 0 || !Number.isFinite(pagado) || pagado < 0 || pagado > total) {
+        throw new Error("El total y el adelanto deben ser importes válidos; el adelanto no puede superar el total.");
+    }
+    const noches = Math.round(
+        (new Date(`${f_salida}T12:00:00`) - new Date(`${f_entrada}T12:00:00`)) / 86400000
+    );
+    if (!Number.isFinite(noches) || noches <= 0) {
+        throw new Error("La fecha de salida debe ser posterior a la fecha de entrada.");
+    }
+    if (!f_entrada || f_entrada > hoyLocal()) {
+        throw new Error("El check-in no se puede registrar antes de la fecha de entrada.");
+    }
+
+    const [clientes, habitaciones, recepciones, estados, usuario, metodo] = await Promise.all([
+        listarClientes(),
+        listarHabitaciones(),
+        listarRecepciones(),
+        leer(supabase.from("estado_habitacion").select("*").eq("estado", "1")),
+        leer(supabase.from("usuario").select("id_usuario").eq("id_usuario", usuarioId).eq("estado", "1").maybeSingle()),
+        leer(supabase.from("metodo_pago").select("id_metodopago").eq("id_metodopago", metodoId).eq("estado", "1").maybeSingle()),
+    ]);
+    if (!clientes.some((cliente) => String(cliente.id_cliente) === String(clienteId))) {
+        throw new Error("El huésped seleccionado no existe o está inactivo.");
+    }
+    if (!usuario) throw new Error("El usuario que registra el check-in no existe o está inactivo.");
+    if (!metodo) throw new Error("El método de pago no existe o está inactivo.");
+    const disponible = buscarHabitacionesDisponibles(habitaciones, recepciones, f_entrada, f_salida)
+        .some((habitacion) => String(habitacion.id_habitacion) === String(habitacionId));
+    if (!disponible) {
+        throw new Error("La habitación no está disponible para esas fechas. Actualiza el listado e inténtalo nuevamente.");
+    }
+    const ocupada = estados.find((estado) =>
+        String(estado.descripcion || "").toUpperCase().includes("OCUP")
+    );
+    if (!ocupada) throw new Error("No hay un estado de habitación «Ocupada» configurado.");
+
+    let apertura;
+    let concepto;
+    let tipoMovimiento;
+    if (pagado > 0) {
+        const aperturaId = Number(id_aperturacaja);
+        const conceptoId = Number(id_concepto);
+        if (!Number.isInteger(aperturaId) || aperturaId <= 0 || !Number.isInteger(conceptoId) || conceptoId <= 0) {
+            throw new Error("Selecciona una caja abierta y un concepto de ingreso para registrar el adelanto.");
+        }
+        [apertura, concepto] = await Promise.all([
+            leer(supabase.from("apertura_caja").select("*").eq("id_aperturacaja", aperturaId).eq("estado", "1").maybeSingle()),
+            leer(supabase.from("concepto_caja").select("*").eq("id_concepto", conceptoId).eq("estado", "1").maybeSingle()),
+        ]);
+        if (!apertura || String(apertura.situacion).toUpperCase() !== "A") {
+            throw new Error("La caja seleccionada no está abierta.");
+        }
+        if (!concepto) throw new Error("El concepto de caja no existe o está inactivo.");
+        tipoMovimiento = await leer(supabase
+            .from("tipo_movimiento_caja")
+            .select("*")
+            .eq("id_tipomovimiento", concepto.id_tipomovimiento)
+            .eq("estado", "1")
+            .maybeSingle());
+        if (tipoMovimiento?.signo !== "+") {
+            throw new Error("El adelanto debe registrarse con un concepto de ingreso.");
+        }
+    }
 
     const recepcion = await insertarFila("recepcion", {
-        id_cliente: Number(id_cliente),
-        id_habitacion: Number(id_habitacion),
-        id_usuario: Number(id_usuario || usuarioActualId()),
-        id_metodopago: Number(id_metodopago),
+        id_cliente: clienteId,
+        id_habitacion: habitacionId,
+        id_usuario: usuarioId,
+        id_metodopago: metodoId,
         f_entrada,
         f_salida,
         d_inicial: total,
-        adelanto: pagado,
+        adelanto: 0,
         d_asistente: 0,
-        t_pagado: pagado,
+        t_pagado: 0,
         contarjeta: 0,
-        totaldeuda: Math.max(0, total - pagado),
+        totaldeuda: total,
         tipodocumento,
         documento: documento || null,
         f_salidac: null,
     });
 
-    const estados = await leer(supabase.from("estado_habitacion").select("*").eq("estado", "1"));
-    const ocupada = estados.find((e) => String(e.descripcion).toUpperCase().includes("OCUP"));
-    if (ocupada) {
-        await actualizarFila("habitacion", "id_habitacion", id_habitacion, {
+    try {
+        await actualizarFila("habitacion", "id_habitacion", habitacionId, {
             id_estadohabitacion: ocupada.id_estadohabitacion,
         });
+    } catch (errorHabitacion) {
+        try {
+            await darBajaFila("recepcion", "id_recepcion", recepcion.id_recepcion);
+        } catch (errorReversion) {
+            const errorParcial = new Error(
+                `No se pudo completar el cambio de estado de la habitación ni revertir el registro de recepción. No repitas el check-in; solicita revisión desde el sistema. Error: ${errorHabitacion.message}; reversión: ${errorReversion.message}`
+            );
+            errorParcial.procesoParcial = true;
+            throw errorParcial;
+        }
+        throw errorHabitacion;
     }
 
-    return recepcion;
+    if (pagado <= 0) return recepcion;
+
+    try {
+        const pago = await registrarPago({
+            id_aperturacaja: apertura.id_aperturacaja,
+            id_recepcion: recepcion.id_recepcion,
+            id_metodopago: metodoId,
+            id_concepto: concepto.id_concepto,
+            id_tipomovimiento: tipoMovimiento.id_tipomovimiento,
+            monto: pagado,
+            descripcion: `Adelanto de check-in · Recepción #${recepcion.id_recepcion}`,
+        });
+        return {
+            ...recepcion,
+            t_pagado: pago.total_pagado,
+            totaldeuda: pago.saldo_pendiente,
+            pago,
+        };
+    } catch (errorPago) {
+        const errorParcial = new Error(
+            `El check-in y la ocupación quedaron registrados, pero no se pudo completar el adelanto. Verifica los movimientos de caja; si el cobro no aparece, regístralo desde Pagos y caja. Detalle: ${errorPago.message}`
+        );
+        errorParcial.procesoParcial = true;
+        throw errorParcial;
+    }
 };
 
 export const registrarIngresoReserva = async (id_recepcion) => {
@@ -645,16 +782,28 @@ export const registrarCheckOut = async (id_recepcion) => {
         throw new Error("La reserva todavía no tiene check-in. Registra el ingreso antes del check-out.");
     }
 
+    const estados = await leer(supabase.from("estado_habitacion").select("*").eq("estado", "1"));
+    const disponible = estados.find((e) => String(e.descripcion).toUpperCase().includes("DISPON"));
+    if (!disponible) throw new Error("No hay un estado de habitación «Disponible» configurado.");
+
     const actualizada = await actualizarFila("recepcion", "id_recepcion", id_recepcion, {
         f_salidac: ahora(),
     });
-
-    const estados = await leer(supabase.from("estado_habitacion").select("*").eq("estado", "1"));
-    const disponible = estados.find((e) => String(e.descripcion).toUpperCase().includes("DISPON"));
-    if (disponible) {
+    try {
         await actualizarFila("habitacion", "id_habitacion", recepcion.id_habitacion, {
             id_estadohabitacion: disponible.id_estadohabitacion,
         });
+    } catch (errorHabitacion) {
+        try {
+            await actualizarFila("recepcion", "id_recepcion", id_recepcion, { f_salidac: null });
+        } catch (errorReversion) {
+            const errorParcial = new Error(
+                `El check-out se registró, pero no se pudo liberar la habitación ni revertir el check-out. No repitas la operación; solicita revisión desde el sistema. Error: ${errorHabitacion.message}; reversión: ${errorReversion.message}`
+            );
+            errorParcial.procesoParcial = true;
+            throw errorParcial;
+        }
+        throw errorHabitacion;
     }
 
     return actualizada;
@@ -978,30 +1127,101 @@ export const registrarPago = async ({
         terminal: "WEB",
     });
 
-    if (afectaEfectivo === "S") {
-        const ingresos = Number(apertura.total_ingresos) || 0;
-        const egresos = Number(apertura.total_egresos) || 0;
-        const nuevosIngresos = Math.round((tipo.signo === "-" ? ingresos : ingresos + valor) * 100) / 100;
-        const nuevosEgresos = Math.round((tipo.signo === "-" ? egresos + valor : egresos) * 100) / 100;
-
-        await actualizarFila("apertura_caja", "id_aperturacaja", id_aperturacaja, {
-            total_ingresos: nuevosIngresos,
-            total_egresos: nuevosEgresos,
-            monto_sistema: Math.round((Number(apertura.monto_inicial) + nuevosIngresos - nuevosEgresos) * 100) / 100,
-        });
-    }
-
     let saldoPendienteDespues = null;
     let totalPagado = null;
+    let pagoCalculado;
+    let saldoCalculado;
     if (recepcion) {
-        const pagado = Math.round(((Number(recepcion.t_pagado) || 0) + valor) * 100) / 100;
-        const saldoPendiente = Math.round((calcularSaldoPendiente(recepcion) - valor) * 100) / 100;
-        await actualizarFila("recepcion", "id_recepcion", recepcionId, {
-            t_pagado: pagado,
-            totaldeuda: Math.max(0, saldoPendiente),
-        });
-        saldoPendienteDespues = Math.max(0, saldoPendiente);
-        totalPagado = pagado;
+        pagoCalculado = Math.round(((Number(recepcion.t_pagado) || 0) + valor) * 100) / 100;
+        saldoCalculado = Math.max(0, Math.round((calcularSaldoPendiente(recepcion) - valor) * 100) / 100);
+    }
+
+    try {
+        if (afectaEfectivo === "S") {
+            const ingresos = Number(apertura.total_ingresos) || 0;
+            const egresos = Number(apertura.total_egresos) || 0;
+            const nuevosIngresos = Math.round((tipo.signo === "-" ? ingresos : ingresos + valor) * 100) / 100;
+            const nuevosEgresos = Math.round((tipo.signo === "-" ? egresos + valor : egresos) * 100) / 100;
+
+            await actualizarFila("apertura_caja", "id_aperturacaja", aperturaId, {
+                total_ingresos: nuevosIngresos,
+                total_egresos: nuevosEgresos,
+                monto_sistema: Math.round((Number(apertura.monto_inicial) + nuevosIngresos - nuevosEgresos) * 100) / 100,
+            });
+        }
+
+        if (recepcion) {
+            await actualizarFila("recepcion", "id_recepcion", recepcionId, {
+                t_pagado: pagoCalculado,
+                totaldeuda: saldoCalculado,
+            });
+            saldoPendienteDespues = saldoCalculado;
+            totalPagado = pagoCalculado;
+        }
+    } catch (errorOperacion) {
+        const erroresReversion = [];
+        let movimientoAnulado = false;
+        try {
+            await darBajaFila("movimiento_caja", "id_movimientocaja", movimiento.id_movimientocaja);
+            movimientoAnulado = true;
+        } catch (errorMovimiento) {
+            erroresReversion.push(`movimiento: ${errorMovimiento.message}`);
+        }
+
+        if (afectaEfectivo === "S" && movimientoAnulado) {
+            try {
+                const [movimientosActivos, tiposActivos] = await Promise.all([
+                    leer(supabase.from("movimiento_caja").select("*")
+                        .eq("estado", "1").eq("id_aperturacaja", aperturaId)),
+                    leer(supabase.from("tipo_movimiento_caja").select("id_tipomovimiento, signo")),
+                ]);
+                const totales = calcularTotalesEfectivo(apertura.monto_inicial, movimientosActivos, tiposActivos);
+                await actualizarFila("apertura_caja", "id_aperturacaja", aperturaId, {
+                    total_ingresos: totales.ingresos,
+                    total_egresos: totales.egresos,
+                    monto_sistema: totales.sistema,
+                });
+            } catch (errorApertura) {
+                erroresReversion.push(`apertura: ${errorApertura.message}`);
+            }
+        }
+
+        if (recepcion) {
+            try {
+                const actual = await leer(supabase.from("recepcion")
+                    .select("t_pagado, totaldeuda")
+                    .eq("id_recepcion", recepcionId)
+                    .maybeSingle());
+                if (!actual) throw new Error("No se encontró la recepción para verificar su saldo.");
+                const actualPagado = Number(actual.t_pagado ?? 0);
+                const actualSaldo = Number(actual.totaldeuda ?? calcularSaldoPendiente(recepcion));
+                const coincideConEstePago =
+                    actualPagado === pagoCalculado
+                    && actualSaldo === saldoCalculado;
+                const sigueConSaldoAnterior =
+                    actualPagado === (Number(recepcion.t_pagado) || 0)
+                    && actualSaldo === calcularSaldoPendiente(recepcion);
+                if (coincideConEstePago) {
+                    await actualizarFila("recepcion", "id_recepcion", recepcionId, {
+                        t_pagado: recepcion.t_pagado,
+                        totaldeuda: recepcion.totaldeuda,
+                    });
+                } else if (!sigueConSaldoAnterior) {
+                    erroresReversion.push("saldo: hubo otro cambio concurrente y no se sobrescribió");
+                }
+            } catch (errorSaldo) {
+                erroresReversion.push(`saldo: ${errorSaldo.message}`);
+            }
+        }
+
+        if (erroresReversion.length) {
+            const errorParcial = new Error(
+                `No se completó el pago y el sistema no pudo revertir todos sus registros. No repitas el cobro; actualiza el historial y verifica el saldo. Error: ${errorOperacion.message}; reversión: ${erroresReversion.join(" | ")}`
+            );
+            errorParcial.procesoParcial = true;
+            throw errorParcial;
+        }
+        throw errorOperacion;
     }
 
     return {

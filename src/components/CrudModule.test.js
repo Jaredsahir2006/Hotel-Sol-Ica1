@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import CrudModule from "./CrudModule";
+import { ENTIDADES } from "../config/entidades";
 import { listar, listarPaginado } from "../services/crudService";
 import { consultarDocumento } from "../services/factilizaService";
 
@@ -158,3 +159,8 @@ test("mantiene visible el error de una tabla relacionada mientras carga el lista
         await screen.findByText(/No se pudieron leer las tablas relacionadas: acceso denegado/)
     ).toBeInTheDocument();
 });
+
+test.each(["reservas", "venta", "detalle_venta", "factura", "boleta", "movimiento_caja"])(
+    "configura %s como solo lectura para proteger operaciones generadas por los flujos",
+    (entidadKey) => expect(ENTIDADES[entidadKey].soloLectura).toBe(true)
+);

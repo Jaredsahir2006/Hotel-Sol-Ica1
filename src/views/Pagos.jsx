@@ -215,6 +215,18 @@ const Pagos = () => {
             await cargar();
             avisar("Pago registrado y movimiento de caja actualizado.");
         } catch (errorPago) {
+            if (errorPago.procesoParcial) {
+                await cargar();
+                setError(errorPago.message);
+                setForm((prev) => ({
+                    ...prev,
+                    id_recepcion: "",
+                    monto: "",
+                    numero_operacion: "",
+                    documento: "",
+                    descripcion: "",
+                }));
+            }
             avisar(errorPago.message, false);
         } finally {
             setGuardando(false);

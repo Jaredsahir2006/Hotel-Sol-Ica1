@@ -183,6 +183,57 @@ test("registra el check-in sobre una reserva existente sin crear otra recepción
     expect(registrarCheckIn).not.toHaveBeenCalled();
 });
 
+test("registra el adelanto del nuevo check-in con caja y concepto de ingreso", async () => {
+    listarClientes.mockResolvedValue([{
+        id_cliente: 31,
+        nombre: "Ana Huamán",
+        documento: "12345678",
+    }]);
+    listarHabitaciones.mockResolvedValue([{
+        id_habitacion: 7,
+        numero: "101",
+        categoria_nombre: "Doble",
+        estado_nombre: "Disponible",
+        precio: 120,
+    }]);
+    listarCatalogosPago.mockResolvedValue({
+        cajas: [],
+        usuarios: [{ id_usuario: 2, logeo: "recepcionista" }],
+        metodos: [{ id_metodopago: 4, n_metodopago: "Efectivo" }],
+        conceptos: [{ id_concepto: 8, id_tipomovimiento: 1, n_concepto: "Adelanto de hospedaje" }],
+        tipos: [{ id_tipomovimiento: 1, signo: "+" }],
+    });
+    listarAperturasAbiertas.mockResolvedValue([{
+        id_aperturacaja: 12,
+        numero_turno: "T0001",
+        caja_nombre: "Recepción",
+    }]);
+    registrarCheckIn.mockResolvedValue({});
+    render(<CheckInOut />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Nuevo ingreso sin reserva" }));
+    await userEvent.selectOptions(screen.getByLabelText("Cliente *"), "31");
+    await userEvent.selectOptions(screen.getByLabelText("Habitación disponible *"), "7");
+    await userEvent.selectOptions(screen.getByLabelText("Atendido por *"), "2");
+    await userEvent.selectOptions(screen.getByLabelText("Método de pago *"), "4");
+    const adelantoInput = screen.getByRole("spinbutton", { name: /Adelanto/ });
+    await userEvent.clear(adelantoInput);
+    await userEvent.type(adelantoInput, "25");
+    await userEvent.selectOptions(screen.getByLabelText("Caja abierta para el cobro *"), "12");
+    await userEvent.selectOptions(screen.getByLabelText("Concepto de ingreso *"), "8");
+    await userEvent.click(screen.getByRole("button", { name: "Registrar ingreso" }));
+
+    await waitFor(() => expect(registrarCheckIn).toHaveBeenCalledWith(expect.objectContaining({
+        id_cliente: "31",
+        id_habitacion: "7",
+        id_usuario: "2",
+        id_metodopago: "4",
+        id_aperturacaja: "12",
+        id_concepto: "8",
+        adelanto: 25,
+    })));
+});
+
 test("prepara la pre-cuenta con consumos y confirma el check-out", async () => {
     const recepcion = {
         ...crearRecepciones(1)[0],

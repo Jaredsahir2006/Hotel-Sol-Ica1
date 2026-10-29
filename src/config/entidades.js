@@ -115,10 +115,11 @@ export const ENTIDADES = {
   // RESERVAS / COMPROBANTES -> tabla recepcion (check-in con su documento)
   reservas: {
     titulo: "Reservas",
-    descripcion: "Recepción de huéspedes: habitación, fechas y pagos (tabla recepcion).",
+    descripcion: "Reservas y estadías registradas desde el flujo de recepción.",
     icono: "bi-calendar-check",
     tabla: "recepcion",
     pk: "id_recepcion",
+    soloLectura: true,
     buscarEn: ["documento"],
     filtros: ["id_metodopago", "tipodocumento"],
     precargar: [{ tabla: "persona", pk: "id_persona" }],   // para mostrar el nombre del cliente
@@ -284,10 +285,11 @@ export const ENTIDADES = {
   // FACTURA -> tabla factura (comprobante electrónico)
   factura: {
     titulo: "Facturas",
-    descripcion: "Comprobantes de factura emitidos por recepción.",
+    descripcion: "Comprobantes emitidos desde el flujo de facturación.",
     icono: "bi-file-earmark-text",
     tabla: "factura",
     pk: "id_factura",
+    soloLectura: true,
     buscarEn: ["numero", "serie"],
     campos: [
       { name: "id_recepcion", label: "Recepción", type: "select", required: true,
@@ -301,10 +303,11 @@ export const ENTIDADES = {
   // BOLETA -> tabla boleta (comprobante electrónico)
   boleta: {
     titulo: "Boletas",
-    descripcion: "Comprobantes de boleta emitidos por recepción.",
+    descripcion: "Comprobantes emitidos desde el flujo de facturación.",
     icono: "bi-receipt",
     tabla: "boleta",
     pk: "id_boleta",
+    soloLectura: true,
     buscarEn: ["numero", "serie"],
     campos: [
       { name: "id_recepcion", label: "Recepción", type: "select", required: true,
@@ -318,10 +321,11 @@ export const ENTIDADES = {
   // VENTA -> tabla venta (consumos de una recepción)
   venta: {
     titulo: "Ventas",
-    descripcion: "Ventas de productos y servicios asociadas a una recepción.",
+    descripcion: "Ventas generadas al registrar consumos de una recepción.",
     icono: "bi-cash-coin",
     tabla: "venta",
     pk: "id_venta",
+    soloLectura: true,
     buscarEn: [],
     campos: [
       { name: "id_recepcion", label: "Recepción", type: "select", required: true,
@@ -333,10 +337,11 @@ export const ENTIDADES = {
   // DETALLE_VENTA -> tabla detalle_venta
   detalle_venta: {
     titulo: "Detalle de ventas",
-    descripcion: "Productos y cantidades que componen cada venta.",
+    descripcion: "Detalle generado desde el registro de consumos.",
     icono: "bi-list-check",
     tabla: "detalle_venta",
     pk: "id_detalle",
+    soloLectura: true,
     buscarEn: [],
     filtros: ["id_venta", "id_producto"],
     campos: [
