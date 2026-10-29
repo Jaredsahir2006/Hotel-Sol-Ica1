@@ -20,7 +20,7 @@
     "xlsx": "^0.18.5"
   },
   "scripts": {
-    "start": "concurrently -k -n API,WEB \"npm --prefix backend run dev\" \"react-scripts start\"",
+    "start": "concurrently --kill-others-on-fail -n API,WEB \"npm --prefix backend run dev\" \"react-scripts start\"",
     "start:frontend": "react-scripts start",
     "start:backend": "npm --prefix backend run dev",
     "build": "react-scripts build",

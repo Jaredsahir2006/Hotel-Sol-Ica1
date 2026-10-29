@@ -37,13 +37,13 @@ const consultarDocumento = async (req, res) => {
     } catch (error) {
         console.error("Error consultando Factiliza:", error.message);
 
-        const status = error.code === "TOKEN_MISSING"
-            ? 503
-            : error.code === "TIMEOUT"
-                ? 504
-                : error.code === "UPSTREAM_REJECTED"
-                    ? 422
-                    : 502;
+        const statusByErrorCode = {
+            TOKEN_MISSING: 503,
+            AUTH_REJECTED: 502,
+            TIMEOUT: 504,
+            UPSTREAM_REJECTED: 422
+        };
+        const status = statusByErrorCode[error.code] || 502;
 
         return res.status(status).json({
             success: false,

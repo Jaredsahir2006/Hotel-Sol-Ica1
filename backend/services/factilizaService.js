@@ -21,13 +21,24 @@ const consultar = async (ruta, numero) => {
             signal: controller.signal
         });
 
+        const responseText = await response.text();
+        if (response.status === 401) {
+            const error = new Error("Factiliza rechazó la autorización (HTTP 401).");
+            error.code = "AUTH_REJECTED";
+            error.publicMessage = "Factiliza rechazó la autorización (HTTP 401). Verifica que el backend esté usando el mismo token API que probaste en Factiliza.";
+            throw error;
+        }
+
         let resultado;
         try {
-            resultado = await response.json();
+            resultado = JSON.parse(responseText);
         } catch {
-            const error = new Error("Factiliza devolvió una respuesta inválida.");
+            const contentType = response.headers.get("content-type") || "no informado";
+            const error = new Error(
+                `Factiliza respondió HTTP ${response.status} con Content-Type ${contentType}, no JSON.`
+            );
             error.code = "UPSTREAM_REJECTED";
-            error.publicMessage = "Factiliza devolvió una respuesta que no se pudo interpretar.";
+            error.publicMessage = `Factiliza respondió HTTP ${response.status} con Content-Type ${contentType}, no JSON.`;
             throw error;
         }
 

@@ -25,6 +25,9 @@ In the project directory, you can run:
 Starts both the backend API (`http://localhost:5000`) and the frontend
 (`http://localhost:3000`). Open [http://localhost:3000](http://localhost:3000)
 in your browser. Both services use this terminal; press Ctrl+C to stop them.
+If the frontend reports that port 3000 is already in use, the backend remains
+running so an existing frontend can continue using the API. Stop the other
+frontend instance before starting another one.
 
 The backend requires `backend/.env` with valid Supabase settings. To run only
 one service, use `npm run start:backend` or `npm run start:frontend` in the
