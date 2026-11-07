@@ -790,7 +790,7 @@ const Login = () => {
                                     justify-center
                                     gap-2
                                     text-xs
-                                    text-gray-400
+                                    text-gray-600
                                 "
                             >
 
