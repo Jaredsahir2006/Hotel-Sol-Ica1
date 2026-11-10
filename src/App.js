@@ -5,7 +5,6 @@ import Login from "./views/Login";
 import Dashboard from "./views/Dashboard";
 import {
     cerrarSesion,
-    obtenerSesion,
     verificarSesionRemota
 } from "./services/authSession";
 
