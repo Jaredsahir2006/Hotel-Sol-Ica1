@@ -1,5 +1,5 @@
 # Getting Started with Create React App
-
+ 
 ## Configuración de la API
 
 El frontend usa `http://localhost:5000/api` durante el desarrollo local. En
